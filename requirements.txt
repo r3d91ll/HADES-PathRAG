@@ -1,28 +1,41 @@
+# Core dependencies
 accelerate
-aioboto3
 aiohttp
+asyncio
+httpx>=0.24.0
+fastapi>=0.100.0
+pydantic>=2.0.0
+uvicorn>=0.23.0
+python-multipart
+python-dotenv
 
-# database packages
+# Database packages
+arangodb>=1.4.0  # For XnX-enhanced PathRAG with ArangoDB
 graspologic
 hnswlib
 nano-vectordb
 neo4j
-networkx
-ollama
-openai
-oracledb
-psycopg[binary,pool]
-pymilvus
-pymongo
-pymysql
-pyvis
-# lmdeploy[all]
-sqlalchemy
+networkx>=3.0
+sqlalchemy>=2.0.0
 tenacity
 
+# Vector database extensions
+pymilvus
+pymongo
+psycopg[binary,pool]
+pymysql
+pyvis
 
 # LLM packages
+ollama>=0.1.0  # For local LLM integration
+openai>=1.0.0  # For API compatibility
 tiktoken
-torch
-transformers
+torch>=2.0.0
+transformers>=4.30.0
 xxhash
+
+# Utilities
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0  # For vector operations
+matplotlib>=3.7.0  # For visualizations

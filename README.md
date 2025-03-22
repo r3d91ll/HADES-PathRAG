@@ -62,3 +62,29 @@ Please cite our paper if you use this code in your own work:
   year={2025}
 }
 ```
+
+## HADES: XnX-Enhanced PathRAG Implementation
+
+This fork contains an enhanced version of PathRAG that integrates XnX notation, ArangoDB, and Ollama for the HADES project.
+
+### What is HADES?
+
+Wondering about our project name? HADES isn't just the Greek god of the underworld - it's a carefully crafted backronym:
+
+- **H**euristic (XnX notation for weighted path tuning)
+- **A**daptive (PathRAG implementation with relationship pruning)
+- **D**ata (ArangoDB knowledge graph storage)
+- **E**xtrapolation (Ollama model inference)
+- **S**ystems (because we needed an S!)
+
+> *Note to critics: Yes, we crafted the name first and built the technology to match it. That's just how cool we are.*
+
+### Key Enhancements
+
+- **XnX Notation**: Added weight, direction, and distance parameters to fine-tune path retrieval
+- **ArangoDB Integration**: Optimized graph storage with combined vector and graph operations
+- **MCP Server**: REST API with entity-relationship model clarity
+- **Ollama Integration**: Local LLM inference for improved privacy and control
+- **Web Interface**: Modern UI for interacting with the system
+
+Run `python start_server.py` to launch the enhanced PathRAG with MCP and Ollama integration.
