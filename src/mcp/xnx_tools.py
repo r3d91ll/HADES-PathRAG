@@ -283,3 +283,82 @@ def mcp0_xnx_verify_access(user_id: str,
             "user_id": user_id,
             "resource_id": resource_id
         }
+
+
+@mcp_tool
+def mcp0_self_analyze(query: str,
+                     target_components: Optional[List[str]] = None,
+                     min_confidence: float = 0.7) -> Dict[str, Any]:
+    """MCP tool for HADES to analyze its own codebase.
+    
+    This recursive tool enables HADES to examine its own implementation,
+    understand its components, and propose improvements.
+    
+    Args:
+        query: Natural language query about HADES itself
+        target_components: Optional list of specific components to analyze
+        min_confidence: Minimum confidence threshold for results
+    
+    Returns:
+        Analysis of the requested HADES components
+    """
+    # Get XnXPathRAG instance
+    pathrag = _get_xnx_pathrag()
+    
+    # Build self-referential query
+    enhanced_query = query
+    if target_components:
+        enhanced_query = f"{query} Focus on the following components: {', '.join(target_components)}"
+    
+    # Execute query with XnX parameters
+    xnx_params = XnXQueryParams(
+        min_weight=min_confidence,
+        max_distance=3,
+        direction=-1  # Only consider outbound relationships for code analysis
+    )
+    
+    # Query the knowledge graph
+    results = pathrag.query(enhanced_query, xnx_params=xnx_params)
+    
+    # Extract code from paths
+    code_segments = []
+    for path in results.get("xnx_paths", []):
+        for node in path.get("nodes", []):
+            if node.get("type") == "code_function" or node.get("type") == "code_class":
+                code_segments.append({
+                    "content": node.get("content", ""),
+                    "file_path": node.get("metadata", {}).get("file_path", ""),
+                    "entity_type": node.get("type", ""),
+                    "name": node.get("name", "")
+                })
+    
+    # Analyze code quality (placeholder for now)
+    code_quality = {
+        "complexity": 0.85,
+        "maintainability": 0.78,
+        "test_coverage": 0.65,
+        "performance": 0.92
+    }
+    
+    # Generate improvement suggestions (placeholder for now)
+    suggestions = [
+        {
+            "metric": "test_coverage",
+            "current_value": 0.65,
+            "target_value": 0.8,
+            "suggestion": "Add tests for the PathRAG query methods",
+            "affected_files": ["src/pathrag/PathRAG.py"]
+        }
+    ]
+    
+    return {
+        "paths": results.get("xnx_paths", []),
+        "code_segments": code_segments,
+        "code_quality": code_quality,
+        "improvement_suggestions": suggestions,
+        "query_parameters": {
+            "query": query,
+            "target_components": target_components,
+            "min_confidence": min_confidence
+        }
+    }

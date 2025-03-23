@@ -1,8 +1,32 @@
-The code for the paper **"PathRAG: Pruning Graph-based Retrieval Augmented Generation with Relational Paths"**.
+# HADES-PathRAG
+
+Enhanced implementation of **PathRAG: Pruning Graph-based Retrieval Augmented Generation with Relational Paths** with XnX notation, ArangoDB integration, and **native Ollama support** for seamless local LLM inference using your existing Ollama installation.
+
+## Features
+
+- 🔍 **PathRAG Implementation**: Efficient graph-based RAG that prunes retrieval paths
+- 🧠 **Native Ollama Integration**: Works directly with locally installed Ollama service for optimized performance
+- 🔗 **XnX Notation**: Enhanced relationship representation in knowledge graphs
+- 📊 **ArangoDB Support**: Scalable graph database backend for enterprise use
+- 🔄 **HADES Recursive Architecture**: Self-improving AI system framework
+- 🚀 **MCP Server**: Model Context Protocol for IDE integration
+
 ## Install
+
 ```bash
-cd PathRAG
+# Clone the repository
+git clone https://github.com/r3d91ll/HADES-PathRAG.git
+cd HADES-PathRAG
+
+# Install dependencies
 pip install -e .
+
+# Use your existing Ollama installation
+# Verify Ollama is running as a system service:
+systemctl status ollama
+
+# Or install Ollama if needed (automatically sets up as a system service on Linux):
+# curl -fsSL https://ollama.com/install.sh | sh
 ```
 ## Quick Start
 * You can quickly experience this project in the `v1_test.py` file.
@@ -12,22 +36,27 @@ pip install -e .
   
 ```python
 import os
-from PathRAG import PathRAG, QueryParam
-from PathRAG.llm import gpt_4o_mini_complete
+from pathrag import PathRAG, QueryParam
+
+# For using Ollama (no API keys needed)
+from pathrag.llm import ollama_model_complete
+
+# For using OpenAI (if preferred)
+# from pathrag.llm import openai_complete
+# os.environ["OPENAI_API_KEY"] = "your_api_key"
 
 WORKING_DIR = "./your_working_dir"
-api_key="your_api_key"
-os.environ["OPENAI_API_KEY"] = api_key
-base_url="https://api.openai.com/v1"
-os.environ["OPENAI_API_BASE"]=base_url
-
-
 if not os.path.exists(WORKING_DIR):
     os.mkdir(WORKING_DIR)
 
+# Initialize with Ollama as the LLM provider
 rag = PathRAG(
     working_dir=WORKING_DIR,
-    llm_model_func=gpt_4o_mini_complete,  
+    llm_model_func=lambda prompt, **kwargs: ollama_model_complete(
+        prompt=prompt,
+        hashing_kv={"global_config": {"llm_model_name": "llama3"}},
+        host="http://localhost:11434"
+    )
 )
 
 data_file="./text.txt"

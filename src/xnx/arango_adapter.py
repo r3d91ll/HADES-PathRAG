@@ -6,21 +6,36 @@ with ArangoDB, supporting XnX notation for weighted path tuning.
 """
 
 import sys
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union
 import json
+import logging
 from datetime import datetime
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Create dynamic import based on where we import ArangoDB connection from
 try:
     # Try to import from our main package structure
     from src.db.arango_connection import ArangoConnection
+    from src.xnx.traversal import (
+        traverse_with_xnx_constraints, traverse_with_temporal_xnx,
+        format_xnx_output, calculate_path_score,
+        XnXTraversalError, InvalidNodeError, WeightThresholdError, TemporalConstraintError
+    )
 except ImportError:
     try:
         # Fall back to the old_hades_imports
         sys.path.append('old_hades_imports')
         from src.db.arango_connection import ArangoConnection
+        # Import traversal functions - assuming they're also in old_hades_imports
+        from src.xnx.traversal import (
+            traverse_with_xnx_constraints, traverse_with_temporal_xnx,
+            format_xnx_output, calculate_path_score,
+            XnXTraversalError, InvalidNodeError, WeightThresholdError, TemporalConstraintError
+        )
     except ImportError:
-        raise ImportError("Could not find ArangoConnection in either location")
+        raise ImportError("Could not find required modules in either location")
 
 
 class ArangoPathRAGAdapter:
@@ -66,9 +81,9 @@ class ArangoPathRAGAdapter:
             self.conn.create_graph(
                 self.graph_name,
                 edge_definitions=[{
-                    'collection': self.edges_collection,
-                    'from': [self.nodes_collection],
-                    'to': [self.nodes_collection]
+                    'edge_collection': self.edges_collection,
+                    'from_vertex_collections': [self.nodes_collection],
+                    'to_vertex_collections': [self.nodes_collection]
                 }]
             )
     
@@ -105,6 +120,30 @@ class ArangoPathRAGAdapter:
         
         return result["_key"]
     
+    def create_edge(self, from_node: str, to_node: str, 
+                    weight: float = 1.0, 
+                    metadata: Dict[str, Any] = None) -> str:
+        """
+        Create an edge between nodes in ArangoDB.
+        
+        This is a simplified version of create_relationship for basic edge creation.
+        
+        Args:
+            from_node: Source node ID
+            to_node: Target node ID
+            weight: Edge weight (0.0 to 1.0)
+            metadata: Additional metadata for the edge
+            
+        Returns:
+            ArangoDB edge document key
+        """
+        return self.create_relationship(
+            from_id=from_node, 
+            to_id=to_node, 
+            weight=weight, 
+            metadata=metadata
+        )
+        
     def create_relationship(self, from_id: str, to_id: str, 
                            weight: float = 1.0, 
                            direction: int = -1,
@@ -240,6 +279,293 @@ class ArangoPathRAGAdapter:
             bind_vars["temporal_constraint"] = temporal_constraint
         
         # Execute the query
-        results = self.conn.execute_query(query, bind_vars=bind_vars)
+        results = self.conn.query(query, bind_vars=bind_vars)
         
         return results
+        
+    def get_paths_from_node(self, node_id: str, max_depth: int = 3) -> List[Dict[str, Any]]:
+        """
+        Get all paths starting from a specific node.
+        
+        Args:
+            node_id: ID of the starting node
+            max_depth: Maximum path depth to traverse
+            
+        Returns:
+            List of paths with their nodes and total weight
+        """
+        # AQL query to find paths from node
+        query = f"""
+        FOR v, e, p IN 1..@max_depth OUTBOUND @start_id 
+        GRAPH @graph_name
+        RETURN {{
+            "nodes": p.vertices,
+            "edges": p.edges,
+            "total_weight": SUM(p.edges[*].weight)
+        }}
+        """
+        
+        # Execute query
+        bind_vars = {
+            "start_id": f"{self.nodes_collection}/{node_id}",
+            "max_depth": max_depth,
+            "graph_name": self.graph_name
+        }
+        
+        return self.conn.query(query, bind_vars)
+    
+    def get_weighted_paths(self, node_id: str, xnx_query: str, max_depth: int = 3) -> List[Dict[str, Any]]:
+        """
+        Get paths with XnX weighting applied.
+        
+        Args:
+            node_id: ID of the starting node
+            xnx_query: XnX query string for weighting
+            max_depth: Maximum path depth to traverse
+            
+        Returns:
+            List of paths with their XnX weighted score
+        """
+        # Simple XnX parser for demo purposes
+        # This is a simplified version of what would actually happen
+        weight_factor = 1.0
+        domain_filter = None
+        
+        # Parse simple XnX queries like "X(domain='code')2" 
+        if xnx_query.startswith("X("):
+            parts = xnx_query.split(")", 1)
+            if len(parts) > 1 and parts[1].isdigit():
+                weight_factor = float(parts[1])
+                attribute_part = parts[0][2:]
+                if "=" in attribute_part:
+                    key, value = attribute_part.split("=")
+                    domain_filter = value.strip().strip("'\"")
+        
+        # AQL query to find paths from node with domain filter
+        query = f"""
+        FOR v, e, p IN 1..@max_depth OUTBOUND @start_id 
+        GRAPH @graph_name
+        LET domain_bonus = p.vertices[*].metadata.domain ANY == @domain_filter ? @weight_factor : 1.0
+        LET base_score = SUM(p.edges[*].weight)
+        LET xnx_score = base_score * domain_bonus
+        SORT xnx_score DESC
+        LIMIT 10
+        RETURN {{
+            "nodes": p.vertices,
+            "edges": p.edges,
+            "base_score": base_score,
+            "xnx_score": xnx_score
+        }}
+        """
+        
+        # Execute query
+        bind_vars = {
+            "start_id": f"{self.nodes_collection}/{node_id}",
+            "max_depth": max_depth,
+            "graph_name": self.graph_name,
+            "domain_filter": domain_filter,
+            "weight_factor": weight_factor
+        }
+        
+        return self.conn.query(query, bind_vars)
+    
+    def find_similar_nodes(self, query_embedding: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Find nodes with embeddings similar to the query embedding.
+        
+        Args:
+            query_embedding: Query vector embedding
+            top_k: Number of similar nodes to return
+            
+        Returns:
+            List of similar nodes with similarity scores
+        """
+        # Fetch all documents first (not efficient but works for demo)
+        query = f"""
+        FOR doc IN {self.nodes_collection}
+        RETURN doc
+        """
+        
+        nodes = self.conn.query(query)
+        
+        # Calculate cosine similarity in Python (since ArangoDB may not have vector extensions)
+        import numpy as np
+        from scipy import spatial
+        
+        # Convert query embedding to numpy array
+        query_vector = np.array(query_embedding)
+        
+        # Calculate similarity for each node
+        scored_nodes = []
+        for node in nodes:
+            # Skip nodes without embeddings
+            if "embedding" not in node:
+                continue
+                
+            node_vector = np.array(node["embedding"])
+            
+            # Calculate cosine similarity
+            try:
+                similarity = 1 - spatial.distance.cosine(query_vector, node_vector)
+            except Exception:
+                # If vectors have different dimensions or other issues
+                similarity = 0.0
+                
+            # Add similarity score to node
+            node["similarity"] = float(similarity)
+            scored_nodes.append(node)
+        
+        # Sort by similarity (descending) and take top_k
+        scored_nodes.sort(key=lambda x: x.get("similarity", 0.0), reverse=True)
+        return scored_nodes[:top_k]
+        
+    def traverse_with_xnx(self, 
+                         start_node: str,
+                         min_weight: float = 0.8,
+                         max_distance: int = 3,
+                         direction: str = "any") -> List[Dict[str, Any]]:
+        """
+        Traverse the graph with XnX constraints on weight and direction.
+        
+        Args:
+            start_node: ID of the starting node
+            min_weight: Minimum edge weight (0.0-1.0)
+            max_distance: Maximum path distance
+            direction: Path direction ('inbound', 'outbound', or 'any')
+            
+        Returns:
+            List of paths matching the constraints
+            
+        Raises:
+            InvalidNodeError: If the start_node does not exist
+            WeightThresholdError: If no paths meet the weight threshold
+        """
+        # Ensure node ID has the correct format
+        start_node_id = self._ensure_node_id_format(start_node)
+        
+        # Use the traversal function
+        try:
+            paths = traverse_with_xnx_constraints(
+                db_connection=self.conn,
+                start_node=start_node_id,
+                min_weight=min_weight,
+                max_distance=max_distance,
+                direction=direction,
+                graph_name=self.graph_name,
+                nodes_collection=self.nodes_collection,
+                edges_collection=self.edges_collection
+            )
+            
+            # Enhance with path scores
+            for path in paths:
+                path['xnx_score'] = calculate_path_score(path)
+                path['log_score'] = calculate_path_score(path, use_log_scale=True)
+                
+            return paths
+            
+        except XnXTraversalError as e:
+            logger.warning(f"XnX traversal error: {str(e)}")
+            # Re-raise to maintain the specific error type
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in traverse_with_xnx: {str(e)}")
+            raise
+    
+    def traverse_with_temporal_xnx(self,
+                                 start_node: str,
+                                 min_weight: float = 0.8,
+                                 max_distance: int = 3,
+                                 direction: str = "any",
+                                 valid_at: Optional[Union[str, datetime]] = None) -> List[Dict[str, Any]]:
+        """
+        Traverse the graph with XnX constraints including temporal validity.
+        
+        Args:
+            start_node: ID of the starting node
+            min_weight: Minimum edge weight (0.0-1.0)
+            max_distance: Maximum path distance
+            direction: Path direction ('inbound', 'outbound', or 'any')
+            valid_at: Time point for which edges should be valid (ISO format string or datetime)
+            
+        Returns:
+            List of paths matching the constraints
+            
+        Raises:
+            InvalidNodeError: If the start_node does not exist
+            WeightThresholdError: If no paths meet the weight threshold
+            TemporalConstraintError: If no paths are valid at the requested time
+        """
+        # Ensure node ID has the correct format
+        start_node_id = self._ensure_node_id_format(start_node)
+        
+        # Use the temporal traversal function
+        try:
+            paths = traverse_with_temporal_xnx(
+                db_connection=self.conn,
+                start_node=start_node_id,
+                min_weight=min_weight,
+                max_distance=max_distance,
+                direction=direction,
+                valid_at=valid_at,
+                graph_name=self.graph_name,
+                nodes_collection=self.nodes_collection,
+                edges_collection=self.edges_collection
+            )
+            
+            # Enhance with path scores
+            for path in paths:
+                path['xnx_score'] = calculate_path_score(path)
+                path['log_score'] = calculate_path_score(path, use_log_scale=True)
+                
+            return paths
+            
+        except XnXTraversalError as e:
+            logger.warning(f"XnX temporal traversal error: {str(e)}")
+            # Re-raise to maintain the specific error type
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in traverse_with_temporal_xnx: {str(e)}")
+            raise
+    
+    def format_paths_as_xnx(self, paths: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Format paths to include XnX notation strings for each edge.
+        
+        Args:
+            paths: List of paths from traverse_with_xnx or traverse_with_temporal_xnx
+            
+        Returns:
+            Same paths with additional xnx_strings field for each path
+        """
+        formatted_paths = []
+        
+        for path in paths:
+            edges = path.get('edges', [])
+            xnx_strings = []
+            
+            for edge in edges:
+                xnx_strings.append(format_xnx_output(edge))
+                
+            # Add the formatted strings to the path
+            path_copy = path.copy()
+            path_copy['xnx_strings'] = xnx_strings
+            formatted_paths.append(path_copy)
+            
+        return formatted_paths
+        
+    def _ensure_node_id_format(self, node_id: str) -> str:
+        """
+        Ensure the node ID has the correct format for traversal.
+        
+        Args:
+            node_id: Node ID to format
+            
+        Returns:
+            Correctly formatted node ID
+        """
+        # If the ID already includes the collection name, return as is
+        if '/' in node_id:
+            return node_id
+            
+        # Otherwise, prefix with the nodes collection name
+        return f"{self.nodes_collection}/{node_id}"
