@@ -44,10 +44,15 @@ def _get_xnx_pathrag():
     """Get or create XnXPathRAG instance."""
     global _xnx_pathrag
     if _xnx_pathrag is None:
-        from PathRAG.llm import gpt_4o_mini_complete  # Placeholder, use actual LLM
+        # Import from our configuration
+        from ..config.llm_config import get_model_func_for_provider
+        
+        # Get the appropriate model function
+        model_func = get_model_func_for_provider()
+        
         _xnx_pathrag = XnXPathRAG(
             working_dir="./path_cache",
-            llm_model_func=gpt_4o_mini_complete,
+            llm_model_func=model_func,  # Will use our configured Qwen2.5-128k model
             arango_adapter=None  # Will create default
         )
     return _xnx_pathrag

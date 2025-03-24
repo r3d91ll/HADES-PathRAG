@@ -10,7 +10,7 @@ python-multipart
 python-dotenv
 
 # Database packages
-arangodb>=1.4.0  # For XnX-enhanced PathRAG with ArangoDB
+python-arango>=7.5.0  # For XnX-enhanced PathRAG with ArangoDB
 graspologic
 hnswlib
 nano-vectordb

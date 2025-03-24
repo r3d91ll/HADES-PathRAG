@@ -21,9 +21,9 @@ load_dotenv()
 
 # Default Ollama settings
 DEFAULT_OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-128k")
 DEFAULT_OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
-DEFAULT_OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "60"))
+DEFAULT_OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 # LLM provider options
 LLM_PROVIDER_OLLAMA = "ollama"
@@ -46,9 +46,11 @@ LLM_CONFIG: Dict[str, Any] = {
         "embed_model": DEFAULT_OLLAMA_EMBED_MODEL,
         "timeout": DEFAULT_OLLAMA_TIMEOUT,
         "parameters": {
-            "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.7")),
-            "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
-            "top_k": int(os.getenv("OLLAMA_TOP_K", "40")),
+            "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.65")),
+            "top_p": float(os.getenv("OLLAMA_TOP_P", "0.95")),
+            "top_k": int(os.getenv("OLLAMA_TOP_K", "30")),
+            "repeat_penalty": float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.1")),
+            "min_p": float(os.getenv("OLLAMA_MIN_P", "0.0")),
             "max_tokens": int(os.getenv("OLLAMA_MAX_TOKENS", "2048")),
         }
     },

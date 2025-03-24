@@ -20,11 +20,12 @@ from ..config.mcp_config import get_mcp_config, get_arango_config, get_pathrag_c
 from ..db.arango_connection import get_db_connection
 from ..pathrag.PathRAG import PathRAG
 from ..xnx.xnx_pathrag import XnXPathRAG
-from ..xnx.xnx_params import XnXParams
+from ..xnx.xnx_params import XnXQueryParams
 from .xnx_tools import (
-    mcp0_pathrag_retrieve,
-    mcp0_ingest_data,
     mcp0_xnx_pathrag_retrieve,
+    mcp0_xnx_create_relationship,
+    mcp0_xnx_assume_identity,
+    mcp0_xnx_verify_access,
     mcp0_self_analyze
 )
 
@@ -156,9 +157,10 @@ class MCPServer:
     
     def register_default_tools(self):
         """Register default MCP tools."""
-        self.register_tool("mcp0_pathrag_retrieve", self.pathrag_retrieve)
-        self.register_tool("mcp0_ingest_data", self.ingest_data)
         self.register_tool("mcp0_xnx_pathrag_retrieve", self.xnx_pathrag_retrieve)
+        self.register_tool("mcp0_xnx_create_relationship", self.xnx_create_relationship)
+        self.register_tool("mcp0_xnx_assume_identity", self.xnx_assume_identity)
+        self.register_tool("mcp0_xnx_verify_access", self.xnx_verify_access)
         self.register_tool("mcp0_self_analyze", self.self_analyze)
     
     def register_tool(self, name: str, handler: Callable):
@@ -206,34 +208,53 @@ class MCPServer:
                 )
                 
                 # Set up the embedding function
-                self.standard_pathrag.set_embedding_function(
-                    lambda texts, **kwargs: ollama_embed(
-                        texts=texts,
-                        embed_model=ollama_config['embed_model'],
-                        host=ollama_config['host'],
-                        timeout=ollama_config['timeout']
-                    )
+                self.standard_pathrag.embedding_func = lambda texts, **kwargs: ollama_embed(
+                    texts=texts,
+                    embed_model=ollama_config['embed_model'],
+                    host=ollama_config['host'],
+                    timeout=ollama_config['timeout']
                 )
         
         # Initialize XnX-enhanced PathRAG
         if not self.xnx_pathrag:
             arango_config = self.arango_config
-            self.xnx_pathrag = XnXPathRAG(
-                db_url=arango_config["url"],
+            # Create ArangoDB connection first
+            from ..db.arango_connection import ArangoConnection
+            from ..xnx.arango_adapter import ArangoPathRAGAdapter
+            
+            # Create a connection to ArangoDB
+            arango_connection = ArangoConnection(
                 db_name=arango_config["db"],
+                host=arango_config["url"],
                 username=arango_config["user"],
                 password=arango_config["password"]
             )
             
+            # Create the adapter with the connection
+            arango_adapter = ArangoPathRAGAdapter(
+                arango_connection=arango_connection,
+                db_name=arango_config["db"]
+            )
+            
+            # Create XnXPathRAG instance with proper parameters
+            self.xnx_pathrag = XnXPathRAG(
+                working_dir=self.standard_pathrag.working_dir,
+                llm_model_func=self.standard_pathrag.llm_model_func,
+                arango_adapter=arango_adapter
+            )
+            
             # Configure with Ollama for text generation
             if provider == "ollama":
-                # Set the XnX parameters to use Ollama
-                xnx_params = XnXParams(
-                    llm_provider="ollama",
-                    llm_model=ollama_config['model'],
-                    embed_model=ollama_config['embed_model']
+                # Set the default XnX query parameters (not LLM related)
+                xnx_params = XnXQueryParams(
+                    min_weight=0.5,  # Default weight threshold
+                    max_distance=3,   # Default max hops
+                    direction=None    # Consider both directions by default
                 )
-                self.xnx_pathrag.set_parameters(xnx_params)
+                
+                # Instead of set_parameters, we need to set the LLM function directly
+                self.xnx_pathrag.llm_model_func = self.standard_pathrag.llm_model_func
+                self.xnx_pathrag.embedding_func = self.standard_pathrag.embedding_func
     
     async def process_message(self, websocket, data: Dict[str, Any], session_data: Dict[str, Any]):
         """
@@ -359,7 +380,7 @@ class MCPServer:
             raise ValueError("Missing required parameter: query")
         
         # Create XnX parameters
-        xnx_params = XnXParams(
+        xnx_params = XnXQueryParams(
             min_weight=min_weight,
             max_distance=max_distance,
             direction=direction,
@@ -443,6 +464,138 @@ class MCPServer:
             "as_of_version": as_of_version
         }
     
+    async def xnx_create_relationship(self, params: Dict[str, Any], session_data: Dict[str, Any]):
+        """
+        Tool handler to create a relationship using XnX-enhanced PathRAG.
+        
+        Args:
+            params: Tool parameters
+            session_data: Session-specific data
+            
+        Returns:
+            Created relationship details
+        """
+        await self.initialize_pathrag()
+        
+        from_entity = params.get("from_entity")
+        to_entity = params.get("to_entity")
+        weight = float(params.get("weight", 1.0))
+        direction = int(params.get("direction", -1))
+        valid_from = params.get("valid_from")
+        valid_until = params.get("valid_until")
+        metadata = params.get("metadata", {})
+        
+        if not from_entity or not to_entity:
+            raise ValueError("Missing required parameters: from_entity and to_entity")
+            
+        # Create the relationship
+        result = await self.xnx_pathrag.create_relationship(
+            from_entity=from_entity,
+            to_entity=to_entity,
+            weight=weight,
+            direction=direction,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            metadata=metadata
+        )
+        
+        return {
+            "from_entity": from_entity,
+            "to_entity": to_entity,
+            "relationship_id": result.get("id"),
+            "status": "created"
+        }
+    
+    async def xnx_assume_identity(self, params: Dict[str, Any], session_data: Dict[str, Any]):
+        """
+        Tool handler to create an identity assumption token.
+        
+        Args:
+            params: Tool parameters
+            session_data: Session-specific data
+            
+        Returns:
+            Identity token information
+        """
+        await self.initialize_pathrag()
+        
+        user_id = params.get("user_id")
+        object_id = params.get("object_id")
+        duration_minutes = int(params.get("duration_minutes", 60))
+        
+        if not user_id or not object_id:
+            raise ValueError("Missing required parameters: user_id and object_id")
+            
+        # Create identity token
+        from datetime import datetime, timedelta
+        import uuid
+        
+        token = XnXIdentityToken(
+            user_id=user_id,
+            object_id=object_id,
+            expiration=datetime.now() + timedelta(minutes=duration_minutes)
+        )
+        
+        # Store the token in our database
+        token_id = str(uuid.uuid4())
+        # In a real implementation, we would persist this token
+        
+        return {
+            "token_id": token_id,
+            "user_id": user_id,
+            "object_id": object_id,
+            "expiration": str(token.expiration)
+        }
+    
+    async def xnx_verify_access(self, params: Dict[str, Any], session_data: Dict[str, Any]):
+        """
+        Tool handler to verify user access to a resource using XnX access control.
+        
+        Args:
+            params: Tool parameters
+            session_data: Session-specific data
+            
+        Returns:
+            Access verification result
+        """
+        await self.initialize_pathrag()
+        
+        user_id = params.get("user_id")
+        resource_id = params.get("resource_id")
+        min_weight = float(params.get("min_weight", 0.7))
+        identity_token_id = params.get("identity_token_id")
+        
+        if not user_id or not resource_id:
+            raise ValueError("Missing required parameters: user_id and resource_id")
+        
+        # Query for paths between user and resource
+        xnx_params = XnXQueryParams(
+            min_weight=min_weight,
+            max_distance=3,  # Reasonable default for access control
+            direction=1  # Inbound to resource
+        )
+        
+        # If identity token provided, look it up and use for identity assumption
+        identity_token = None
+        if identity_token_id:
+            # In a real implementation, retrieve the token from persistence
+            # For now, just demonstrate the concept
+            pass
+        
+        # Check access paths
+        access_query = f"access from {user_id} to {resource_id}"
+        paths = await self.xnx_pathrag.query(access_query, xnx_params)
+        
+        # Access is granted if valid paths exist
+        has_access = len(paths) > 0
+        
+        return {
+            "user_id": user_id,
+            "resource_id": resource_id,
+            "has_access": has_access,
+            "paths": paths if has_access else []
+        }
+    
     async def self_analyze(self, params: Dict[str, Any], session_data: Dict[str, Any]):
         """
         Tool handler for HADES to analyze its own codebase.
@@ -474,7 +627,7 @@ class MCPServer:
         # Execute query with XnX parameters
         paths = await self.xnx_pathrag.query(
             query,
-            XnXParams(
+            XnXQueryParams(
                 min_weight=min_confidence,
                 max_distance=3,
                 direction=-1  # Only consider outbound relationships for code analysis
@@ -517,8 +670,8 @@ class MCPServer:
         
         # Describe the ingest_data tool
         tool_descriptions.append({
-            "name": "mcp0_ingest_data",
-            "description": "Ingest data into the knowledge graph using PathRAG",
+            "name": "mcp0_xnx_create_relationship",
+            "description": "Create a relationship between entities using XnX-enhanced PathRAG",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -542,8 +695,8 @@ class MCPServer:
         
         # Describe the pathrag_retrieve tool
         tool_descriptions.append({
-            "name": "mcp0_pathrag_retrieve",
-            "description": "Retrieve paths from the knowledge graph using PathRAG",
+            "name": "mcp0_xnx_pathrag_retrieve",
+            "description": "Retrieve paths from the knowledge graph using XnX-enhanced PathRAG",
             "parameters": {
                 "type": "object",
                 "properties": {

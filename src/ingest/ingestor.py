@@ -3,8 +3,9 @@ Repository ingestor module for ingesting code repositories into PathRAG.
 """
 import os
 import sys
+import json
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Union
+from typing import Dict, List, Any, Optional, Tuple, Union, Set
 import logging
 from datetime import datetime
 
@@ -13,6 +14,7 @@ from src.xnx.arango_adapter import ArangoPathRAGAdapter
 from src.ingest.git_operations import GitOperations
 from src.ingest.code_parser import CodeParser, Module
 from src.ingest.doc_parser import DocParser, DocumentationFile
+from src.ingest.llm_code_analyzer import LLMCodeAnalyzer
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -51,7 +53,8 @@ class RepositoryIngestor:
     }
     
     def __init__(self, database: str = "pathrag", host: str = "localhost", 
-                 port: int = 8529, username: str = "root", password: str = ""):
+                 port: int = 8529, username: str = "root", password: str = "",
+                 use_llm_analysis: bool = True, llm_model: str = "qwen2.5-128k"):
         """
         Initialize RepositoryIngestor with database connection parameters.
         
@@ -61,6 +64,8 @@ class RepositoryIngestor:
             port: ArangoDB port
             username: ArangoDB username
             password: ArangoDB password
+            use_llm_analysis: Whether to use LLM-powered code analysis
+            llm_model: Name of the LLM model to use for code analysis
         """
         self.db_params = {
             "database": database,
@@ -81,6 +86,17 @@ class RepositoryIngestor:
         
         # Initialize PathRAG adapter
         self.pathrag_adapter = ArangoPathRAGAdapter(self.db_connection)
+        
+        # LLM analysis settings
+        self.use_llm_analysis = use_llm_analysis
+        self.llm_model = llm_model
+        if use_llm_analysis:
+            try:
+                self.llm_analyzer = LLMCodeAnalyzer(model_name=llm_model)
+                logger.info(f"Initialized LLM code analyzer with model: {llm_model}")
+            except Exception as e:
+                logger.warning(f"Could not initialize LLM analyzer: {e}. Falling back to static analysis.")
+                self.use_llm_analysis = False
         
     def setup_collections(self) -> None:
         """
@@ -164,6 +180,21 @@ class RepositoryIngestor:
             modules = code_parser.parse_repository()
             stats["modules_count"] = len(modules)
             
+            # LLM-powered code analysis if enabled
+            llm_analyses = {}
+            llm_relationships = []
+            if self.use_llm_analysis:
+                try:
+                    logger.info("Starting LLM-powered code analysis")
+                    llm_analyses, llm_relationships = self._perform_llm_code_analysis(repo_path, modules)
+                    stats["llm_analyses_count"] = len(llm_analyses)
+                    stats["llm_relationships_count"] = len(llm_relationships)
+                    logger.info(f"Completed LLM analysis of {len(llm_analyses)} files with {len(llm_relationships)} relationships")
+                except Exception as e:
+                    error_msg = f"Error during LLM code analysis: {e}"
+                    logger.error(error_msg)
+                    stats["errors"].append(error_msg)
+            
             # Parse documentation files
             doc_parser = DocParser(repo_path)
             doc_files = doc_parser.parse_documentation()
@@ -183,6 +214,13 @@ class RepositoryIngestor:
             code_relationships = code_parser.extract_relationships(modules)
             edges_created = self._create_code_relationships(code_relationships, file_nodes)
             stats["edges_created"] += edges_created
+            
+            # Create relationships from LLM analysis if available
+            if llm_relationships and self.use_llm_analysis:
+                llm_edges_created = self._create_llm_relationships(llm_relationships, file_nodes)
+                stats["edges_created"] += llm_edges_created
+                stats["llm_edges_created"] = llm_edges_created
+                logger.info(f"Created {llm_edges_created} edges from LLM analysis")
             
             # Extract and create doc-code relationships
             doc_code_relationships = doc_parser.extract_doc_code_relationships(doc_files)
@@ -244,6 +282,9 @@ class RepositoryIngestor:
                 "files_processed": stats["files_processed"],
                 "modules_count": stats.get("modules_count", 0),
                 "doc_files_count": stats.get("doc_files_count", 0),
+                "llm_analyses_count": stats.get("llm_analyses_count", 0),
+                "llm_relationships_count": stats.get("llm_relationships_count", 0),
+                "llm_edges_created": stats.get("llm_edges_created", 0),
                 "completed_at": datetime.now().isoformat()
             }
         }
@@ -655,3 +696,194 @@ class RepositoryIngestor:
             normalized = normalized[:250]
             
         return normalized
+
+    def _perform_llm_code_analysis(self, repo_path: Path, modules: Dict[str, Module]) -> Tuple[Dict[str, Dict], List[Dict]]:  
+        """
+        Perform LLM-powered code analysis on files in a repository.
+        
+        Args:
+            repo_path: Path to the repository directory
+            modules: Dictionary of parsed modules
+            
+        Returns:
+            Tuple of (analyses_by_file, extracted_relationships)
+        """
+        analyses = {}
+        relationships = []
+        analyzed_count = 0
+        total_files = len(modules)
+        
+        # Limit the number of files to analyze to prevent excessive processing time
+        max_files_to_analyze = min(50, total_files)  # Adjust this number as needed
+        
+        # Sort modules by size (smaller files first) to optimize processing
+        sorted_modules = sorted(
+            modules.items(), 
+            key=lambda x: len(Path(x[0]).read_text()) if Path(x[0]).exists() else 0
+        )
+        
+        # Find important files to prioritize (e.g., core modules, adapters, etc.)
+        important_files = []
+        for file_path, _ in sorted_modules:
+            if any(keyword in file_path.lower() for keyword in 
+                   ["adapter", "core", "model", "api", "database", "main", "app", "config"]):
+                important_files.append(file_path)
+        
+        # Prepare list of files to analyze with important files first
+        files_to_analyze = important_files[:max_files_to_analyze//2]
+        remaining_slots = max_files_to_analyze - len(files_to_analyze)
+        
+        # Add remaining files that weren't marked as important
+        for file_path, _ in sorted_modules:
+            if file_path not in files_to_analyze and remaining_slots > 0:
+                files_to_analyze.append(file_path)
+                remaining_slots -= 1
+        
+        logger.info(f"Selected {len(files_to_analyze)} files for LLM analysis out of {total_files} total files")
+        
+        # Analyze each selected file
+        for file_path in files_to_analyze:
+            try:
+                if not Path(file_path).exists():
+                    logger.warning(f"File {file_path} not found, skipping LLM analysis")
+                    continue
+                
+                logger.info(f"Analyzing file with LLM: {file_path} ({analyzed_count}/{len(files_to_analyze)})")
+                
+                # Perform LLM analysis on the file
+                analysis = self.llm_analyzer.analyze_code_file(file_path)
+                
+                if analysis:
+                    analyses[file_path] = analysis
+                    analyzed_count += 1
+                    logger.info(f"Completed analysis for {file_path}")
+                else:
+                    logger.warning(f"LLM analysis returned no results for {file_path}")
+            except Exception as e:
+                logger.error(f"Error during LLM analysis of {file_path}: {e}")
+        
+        # Extract relationships between analyzed files
+        if len(analyses) >= 2:
+            logger.info("Extracting relationships between analyzed files...")
+            analyzed_files = list(analyses.keys())
+            
+            # Limit number of file pairs to analyze to prevent combinatorial explosion
+            max_relationships = 50
+            relationship_count = 0
+            
+            for i in range(len(analyzed_files)):
+                for j in range(i+1, len(analyzed_files)):
+                    if relationship_count >= max_relationships:
+                        break
+                    
+                    file1 = analyzed_files[i]
+                    file2 = analyzed_files[j]
+                    
+                    try:
+                        # Extract relationships between the two files
+                        file_relationships = self.llm_analyzer.extract_relationships(
+                            analyses[file1], analyses[file2], file1=file1, file2=file2
+                        )
+                        
+                        if file_relationships:
+                            relationships.extend(file_relationships)
+                            relationship_count += len(file_relationships)
+                            logger.info(f"Found {len(file_relationships)} relationships between {file1} and {file2}")
+                    except Exception as e:
+                        logger.error(f"Error extracting relationships between {file1} and {file2}: {e}")
+        
+        logger.info(f"Completed LLM analysis with {len(analyses)} files and {len(relationships)} relationships")
+        return analyses, relationships
+    
+    def _create_llm_relationships(self, relationships: List[Dict], file_nodes: Dict[str, Dict[str, str]]) -> int:
+        """
+        Create edges for relationships identified by LLM analysis.
+        
+        Args:
+            relationships: List of relationships extracted by LLM
+            file_nodes: Dictionary mapping file paths to node IDs
+            
+        Returns:
+            Number of edges created
+        """
+        edges_created = 0
+        
+        # Create edges for each relationship
+        for rel in relationships:
+            try:
+                # Extract relationship data
+                rel_type = rel.get("type", "RELATED").upper()  # Default to RELATED
+                from_element = rel.get("from_element")
+                to_element = rel.get("to_element")
+                description = rel.get("description", "")
+                confidence = float(rel.get("confidence", 0.5))  # Default to 0.5
+                from_file = rel.get("from_file")
+                to_file = rel.get("to_file")
+                
+                # Skip if required information is missing
+                if not from_element or not to_element or not from_file or not to_file:
+                    logger.warning(f"Skipping relationship due to missing information: {rel}")
+                    continue
+                
+                # Map to edge type
+                edge_type = self.EDGE_TYPES.get(rel_type, "related")
+                if edge_type not in self.EDGE_TYPES.values():
+                    # If not a known edge type, map to a default
+                    if "CALLS" in rel_type or "INVOKES" in rel_type:
+                        edge_type = self.EDGE_TYPES["CALLS"]
+                    elif "INHERITS" in rel_type or "EXTENDS" in rel_type:
+                        edge_type = self.EDGE_TYPES["INHERITS"]
+                    elif "IMPORTS" in rel_type or "USES" in rel_type:
+                        edge_type = self.EDGE_TYPES["IMPORTS"]
+                    elif "IMPLEMENTS" in rel_type:
+                        edge_type = self.EDGE_TYPES["IMPLEMENTS"]
+                    elif "DOCUMENTS" in rel_type or "DESCRIBES" in rel_type:
+                        edge_type = self.EDGE_TYPES["DOCUMENTS"]
+                    else:
+                        edge_type = "related"
+                
+                # Validate that the files exist in our nodes
+                if from_file not in file_nodes or to_file not in file_nodes:
+                    logger.warning(f"Skipping relationship - files not found: {from_file} or {to_file}")
+                    continue
+                
+                # Find the specific node keys for the elements
+                from_module_key = file_nodes[from_file].get("module")
+                to_module_key = file_nodes[to_file].get("module")
+                
+                # If module keys aren't available, use file keys
+                if not from_module_key:
+                    from_module_key = file_nodes[from_file].get("file")
+                if not to_module_key:
+                    to_module_key = file_nodes[to_file].get("file")
+                
+                if not from_module_key or not to_module_key:
+                    logger.warning(f"Skipping relationship - module keys not found: {from_module_key} or {to_module_key}")
+                    continue
+                
+                # Create edge attributes
+                edge_attrs = {
+                    "description": description,
+                    "confidence": confidence,
+                    "from_element": from_element,
+                    "to_element": to_element,
+                    "from_file": from_file,
+                    "to_file": to_file,
+                    "llm_generated": True
+                }
+                
+                # Create the edge
+                self._create_edge(
+                    from_key=from_module_key,
+                    to_key=to_module_key,
+                    edge_type=edge_type,
+                    weight=confidence,
+                    attributes=edge_attrs
+                )
+                
+                edges_created += 1
+                
+            except Exception as e:
+                logger.error(f"Error creating edge for LLM relationship: {e}, {rel}")
+        
+        return edges_created

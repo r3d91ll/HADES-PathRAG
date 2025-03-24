@@ -434,6 +434,9 @@ def get_patched_arango_client(host: Optional[str] = None, **kwargs) -> PatchedAr
     return get_client(host=host, **kwargs)
 
 
+
+
+
 class ArangoConnection:
     """
     Wrapper around ArangoDB connection functionality.
@@ -647,3 +650,23 @@ class ArangoConnection:
                 logger.error(f"Error deleting graph: {e}")
                 raise
         return False
+
+
+def get_db_connection(db_name: Optional[str] = None, host: Optional[str] = None,
+                     username: Optional[str] = None, password: Optional[str] = None) -> ArangoConnection:
+    """
+    Get an ArangoDB connection for the MCP server.
+    
+    This is a compatibility function specifically for the MCP server
+    that returns an ArangoConnection instance.
+    
+    Args:
+        db_name: Name of the database to connect to (default: from environment)
+        host: ArangoDB host URL (default: from environment)
+        username: ArangoDB username (default: from environment)
+        password: ArangoDB password (default: from environment)
+        
+    Returns:
+        ArangoConnection instance
+    """
+    return ArangoConnection(db_name=db_name, host=host, username=username, password=password)

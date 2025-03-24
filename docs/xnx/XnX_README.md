@@ -219,6 +219,25 @@ Where **τ** is a minimum threshold.
 
 ---
 
+## 🔐 Security and Integrity Considerations
+
+1. **Secure Communication**: 
+   - All XnX queries and traversals should occur over secure channels (TLS/SSL or equivalent).
+
+2. **Hash-Based Query Signing**:
+   - Each query could be hashed (SHA-256 or better) and signed to detect tampering.
+
+3. **Replay Protection**:
+   - Include nonces or timestamps to prevent replay attacks.
+
+4. **Role-Based Query Limits**:
+   - Apply XnX ACL logic to prevent privilege escalation via traversal manipulation.
+
+Example:
+```
+sha256("start_node=entities/user.john_doe&min_weight=0.8&max_distance=3&timestamp=1700000000")
+```
+
 ## 🚀 Future Additions & Optimizations
 
 ### Performance Optimization
