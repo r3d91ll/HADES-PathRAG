@@ -50,7 +50,7 @@ PathRAG_cache*/
 .env.local
 
 # Model files
-models/
+#models/
 
 # Jupyter Notebook
 .ipynb_checkpoints

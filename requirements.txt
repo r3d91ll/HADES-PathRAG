@@ -1,0 +1,27 @@
+# Core dependencies
+networkx>=3.0.0
+numpy>=2.0.0
+torch>=2.0.0
+sentence-transformers>=2.2.0
+scikit-learn>=1.2.0
+python-arango>=8.0.0
+pydantic>=2.0.0
+tqdm>=4.0.0
+
+# MCP Server dependencies
+fastapi>=0.115.0
+uvicorn>=0.34.0
+python-jose[cryptography]>=3.4.0
+python-multipart>=0.0.20
+sse-starlette>=1.6.5
+websockets>=12.0.0
+asyncio>=3.4.3
+jsonschema>=4.18.0
+
+# Type checking
+mypy>=1.15.0
+mypy-extensions>=1.0.0
+types-networkx>=3.4.0
+types-requests>=2.32.0
+types-tqdm>=4.67.0
+typing_extensions>=4.13.0
