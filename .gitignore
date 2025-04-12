@@ -1,8 +1,12 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# C extensions
 *.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -19,96 +23,37 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# Virtual Environments
-venv/
-env/
-ENV/
+# Virtual environments
 .env
 .venv
+env/
+venv/
+ENV/
 env.bak/
 venv.bak/
-.python-version
 
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-
-# PyBuilder
-target/
-
-# IDE specific files
+# IDE files
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
-.DS_Store
-*.sublime-workspace
-*.sublime-project
 
-# ArangoDB specific
-arangodb/
-.arango_password
-.arangodb
-
-# Ollama specific
-.ollama/
-model_cache/
-
-# ML/AI specific
-*.h5
-*.pkl
-*.joblib
-models/
-embeddings/
-checkpoints/
-logs/
-tensorboard/
-
-# HADES-PathRAG specific
-# Add any project-specific files/dirs that shouldn't be committed
-data/raw/
-data/processed/
-.credentials
-config/local.yaml
-
-# OS specific files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Logs and temp files
+# Project specific
 *.log
-logs/
-tmp/
-temp/
-
-# Docker
-.docker/
-docker-compose.override.yml
-
-# Database
-db.sqlite3
+.coverage
+backup*/
+PathRAG_cache*/
 
 # Environment variables
-*.env
-.env.*
-!.env.template
+.env
+.env.local
+
+# Model files
+models/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/

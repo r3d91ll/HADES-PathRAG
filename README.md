@@ -1,119 +1,89 @@
 # HADES-PathRAG
 
-Enhanced implementation of **PathRAG: Pruning Graph-based Retrieval Augmented Generation with Relational Paths** with XnX notation, ArangoDB integration, and **native Ollama support** for seamless local LLM inference using your existing Ollama installation.
+Path-based Retrieval Augmented Generation with ISNE (Inductive Shallow Node Embedding) for efficient graph traversal and retrieval.
+
+## Overview
+
+HADES-PathRAG implements a novel approach to path-based retrieval augmented generation using ISNE embeddings. This implementation focuses on:
+
+- Type-safe code with strict mypy compliance
+- Efficient graph traversal using structural node embeddings
+- Optimized path retrieval for context augmentation
 
 ## Features
 
-- 🔍 **PathRAG Implementation**: Efficient graph-based RAG that prunes retrieval paths
-- 🧠 **Native Ollama Integration**: Works directly with locally installed Ollama service for optimized performance
-- 🔗 **XnX Notation**: Enhanced relationship representation in knowledge graphs
-- 📊 **ArangoDB Support**: Scalable graph database backend for enterprise use
-- 🔄 **HADES Recursive Architecture**: Self-improving AI system framework
-- 🚀 **MCP Server**: Model Context Protocol for IDE integration
+- **ISNE Embeddings**: Structure-aware node embeddings that capture graph topology
+- **PathRAG**: Path-based retrieval mechanism that prioritizes the most relevant paths
+- **Type Safety**: Comprehensive type annotations and mypy compliance throughout the codebase
+- **Extensible Storage**: Modular storage backends for different graph database systems
 
-## Install
+## Installation
+
+### Development Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/r3d91ll/HADES-PathRAG.git
+git clone https://github.com/yourusername/HADES-PathRAG.git
 cd HADES-PathRAG
 
-# Install dependencies
-pip install -e .
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Use your existing Ollama installation
-# Verify Ollama is running as a system service:
-systemctl status ollama
+# Install the package in development mode with all dependencies
+pip install -e ".[dev]"
 
-# Or install Ollama if needed (automatically sets up as a system service on Linux):
-# curl -fsSL https://ollama.com/install.sh | sh
+# Install type stubs for external dependencies
+pip install types-networkx types-PyYAML types-tqdm
 ```
-## Quick Start
-* You can quickly experience this project in the `v1_test.py` file.
-* Set OpenAI API key in environment if using OpenAI models: `api_key="sk-...".` in the `v1_test.py` and `llm.py` file
-* Prepare your retrieval document "text.txt".
-* Use the following Python snippet in the "v1_text.py" file to initialize PathRAG and perform queries.
-  
+
+## Usage
+
+Basic usage example:
+
 ```python
-import os
-from pathrag import PathRAG, QueryParam
+from hades_pathrag.embeddings import ISNEEmbedder
+from hades_pathrag.storage import NetworkXStorage
+from hades_pathrag.pathrag import PathRAG
 
-# For using Ollama (no API keys needed)
-from pathrag.llm import ollama_model_complete
+# Initialize the embedder
+embedder = ISNEEmbedder(embedding_dim=128)
 
-# For using OpenAI (if preferred)
-# from pathrag.llm import openai_complete
-# os.environ["OPENAI_API_KEY"] = "your_api_key"
+# Create a storage backend
+storage = NetworkXStorage(graph_path="knowledge_graph.graphml")
 
-WORKING_DIR = "./your_working_dir"
-if not os.path.exists(WORKING_DIR):
-    os.mkdir(WORKING_DIR)
+# Initialize PathRAG with the embedder and storage
+pathrag = PathRAG(embedder=embedder, storage=storage)
 
-# Initialize with Ollama as the LLM provider
-rag = PathRAG(
-    working_dir=WORKING_DIR,
-    llm_model_func=lambda prompt, **kwargs: ollama_model_complete(
-        prompt=prompt,
-        hashing_kv={"global_config": {"llm_model_name": "llama3"}},
-        host="http://localhost:11434"
-    )
-)
+# Retrieve paths for a query
+results = pathrag.retrieve("How does function X affect component Y?")
 
-data_file="./text.txt"
-question="your_question"
-with open(data_file) as f:
-    rag.insert(f.read())
-
-print(rag.query(question, param=QueryParam(mode="hybrid")))
-```
-## Parameter modification
-You can adjust the relevant parameters in the `base.py` and `operate.py` files.
-
-## Batch Insert
-```python
-import os
-folder_path = "your_folder_path"  
-
-txt_files = [f for f in os.listdir(folder_path) if f.endswith(".txt")]
-for file_name in txt_files:
-    file_path = os.path.join(folder_path, file_name)
-    with open(file_path, "r", encoding="utf-8") as file:
-        rag.insert(file.read())
+# Process results
+for path in results:
+    print(f"Path score: {path.score}")
+    print(f"Path: {' -> '.join(path.nodes)}")
 ```
 
-## Cite
-Please cite our paper if you use this code in your own work:
-```python
-@article{chen2025pathrag,
-  title={PathRAG: Pruning Graph-based Retrieval Augmented Generation with Relational Paths},
-  author={Chen, Boyu and Guo, Zirui and Yang, Zidan and Chen, Yuluo and Chen, Junze and Liu, Zhenghao and Shi, Chuan and Yang, Cheng},
-  journal={arXiv preprint arXiv:2502.14902},
-  year={2025}
-}
+## Development
+
+This project follows strict type safety standards:
+
+1. All code must pass mypy type checking with the strict configuration
+2. Tests must be written for all components
+3. Type stubs must be used for external dependencies
+
+To run type checking:
+
+```bash
+mypy hades_pathrag
 ```
 
-## HADES: XnX-Enhanced PathRAG Implementation
+To run tests:
 
-This fork contains an enhanced version of PathRAG that integrates XnX notation, ArangoDB, and Ollama for the HADES project.
+```bash
+pytest
+```
 
-### What is HADES?
+## License
 
-Wondering about our project name? HADES isn't just the Greek god of the underworld - it's a carefully crafted backronym:
-
-- **H**euristic (XnX notation for weighted path tuning)
-- **A**daptive (PathRAG implementation with relationship pruning)
-- **D**ata (ArangoDB knowledge graph storage)
-- **E**xtrapolation (Ollama model inference)
-- **S**ystems (because we needed an S!)
-
-> *Note to critics: Yes, we crafted the name first and built the technology to match it. That's just how cool we are.*
-
-### Key Enhancements
-
-- **XnX Notation**: Added weight, direction, and distance parameters to fine-tune path retrieval
-- **ArangoDB Integration**: Optimized graph storage with combined vector and graph operations
-- **MCP Server**: REST API with entity-relationship model clarity
-- **Ollama Integration**: Local LLM inference for improved privacy and control
-- **Web Interface**: Modern UI for interacting with the system
-
-Run `python start_server.py` to launch the enhanced PathRAG with MCP and Ollama integration.
+MIT License
