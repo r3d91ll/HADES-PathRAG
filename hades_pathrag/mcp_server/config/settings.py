@@ -51,6 +51,10 @@ class ServerConfig(BaseModel):
         default=["*"],
         description="CORS allowed origins"
     )
+    timeout_seconds: int = Field(
+        default=120,
+        description="Request timeout in seconds for tool calls"
+    )
 
 
 class DatabaseConfig(BaseModel):

@@ -14,7 +14,7 @@ from hades_pathrag.mcp_server.config.settings import load_config
 from hades_pathrag.ingestion.pipeline import create_pipeline_from_config
 
 
-def setup_logging(verbose: bool = False):
+def setup_logging(verbose: bool = False) -> None:
     """Set up logging configuration."""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -24,7 +24,7 @@ def setup_logging(verbose: bool = False):
     )
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="HADES-PathRAG Data Ingestion Pipeline")
     
@@ -95,8 +95,12 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
-    """Main entry point for the CLI."""
+def main() -> int:
+    """Main entry point for the CLI.
+    
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
     args = parse_args()
     setup_logging(args.verbose)
     logger = logging.getLogger(__name__)
@@ -158,4 +162,5 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = main()
+    sys.exit(exit_code)

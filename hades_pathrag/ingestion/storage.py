@@ -50,24 +50,29 @@ class ArangoStorage:
         # Ensure collections exist
         self._setup_collections()
     
-    def _setup_collections(self):
+    def _setup_collections(self) -> None:
         """
         Ensure that all required collections exist.
         """
+        # Ensure we have a valid database connection
+        if self.connection is None or self.connection.db is None:
+            logger.error("No valid database connection available for collection setup")
+            return
+            
         db = self.connection.db
         
         # Create document collection if it doesn't exist
-        if not db.has_collection(self.document_collection):
+        if db and hasattr(db, 'has_collection') and not db.has_collection(self.document_collection):
             logger.info(f"Creating document collection {self.document_collection}")
             db.create_collection(self.document_collection)
         
         # Create edge collection if it doesn't exist
-        if not db.has_collection(self.edge_collection):
+        if db and hasattr(db, 'has_collection') and not db.has_collection(self.edge_collection):
             logger.info(f"Creating edge collection {self.edge_collection}")
             db.create_collection(self.edge_collection, edge=True)
         
         # Create vector collection if it doesn't exist
-        if not db.has_collection(self.vector_collection):
+        if db and hasattr(db, 'has_collection') and not db.has_collection(self.vector_collection):
             logger.info(f"Creating vector collection {self.vector_collection}")
             db.create_collection(self.vector_collection)
             # Add vector index if needed
@@ -102,7 +107,18 @@ class ArangoStorage:
         Returns:
             The ArangoDB document key
         """
+        # Ensure we have a valid database connection
+        if self.connection is None or self.connection.db is None:
+            logger.error("No valid database connection available for storing document")
+            return ""
+            
         db = self.connection.db
+        
+        # Safely access the document collection
+        if not hasattr(db, '__getitem__'):
+            logger.error("Database connection does not support collection access")
+            return ""
+            
         doc_collection = db[self.document_collection]
         
         # Prepare document data
@@ -114,7 +130,7 @@ class ArangoStorage:
         }
         
         # Check if document already exists
-        if doc_collection.has(doc_data["_key"]):
+        if hasattr(doc_collection, 'has') and doc_collection.has(str(doc_data["_key"])):
             logger.debug(f"Document {doc_data['_key']} already exists, updating")
             doc_collection.update(doc_data)
         else:
@@ -122,7 +138,12 @@ class ArangoStorage:
             doc_collection.insert(doc_data)
         
         # Store embedding if available
-        if document.embedding:
+        if document.embedding and db is not None:
+            # Safely access the vector collection
+            if not hasattr(db, '__getitem__'):
+                logger.error("Database connection does not support collection access for vectors")
+                return str(doc_data["_key"])
+                
             vec_collection = db[self.vector_collection]
             vec_data = {
                 "_key": doc_data["_key"],
@@ -130,14 +151,14 @@ class ArangoStorage:
                 "embedding": document.embedding,
             }
             
-            if vec_collection.has(vec_data["_key"]):
+            if hasattr(vec_collection, 'has') and vec_collection.has(str(vec_data["_key"])):
                 logger.debug(f"Vector {vec_data['_key']} already exists, updating")
                 vec_collection.update(vec_data)
             else:
                 logger.debug(f"Creating new vector {vec_data['_key']}")
                 vec_collection.insert(vec_data)
         
-        return doc_data["_key"]
+        return str(doc_data["_key"])
     
     def store_relationship(self, relationship: DocumentRelation) -> str:
         """
@@ -147,9 +168,20 @@ class ArangoStorage:
             relationship: The relationship to store
             
         Returns:
-            The ArangoDB edge key
+            The ArangoDB edge key or empty string if there was an error
         """
+        # Ensure we have a valid database connection
+        if self.connection is None or self.connection.db is None:
+            logger.error("No valid database connection available for storing relationship")
+            return ""
+            
         db = self.connection.db
+        
+        # Safely access collections
+        if not hasattr(db, '__getitem__'):
+            logger.error("Database connection does not support collection access")
+            return ""
+            
         edge_collection = db[self.edge_collection]
         doc_collection = db[self.document_collection]
         
@@ -158,13 +190,13 @@ class ArangoStorage:
         target_key = relationship.target_id.replace("/", "_").replace(" ", "_")
         
         # Ensure both documents exist
-        if not doc_collection.has(source_key):
+        if not hasattr(doc_collection, 'has') or not doc_collection.has(source_key):
             logger.warning(f"Source document {source_key} does not exist")
-            return None
+            return ""
         
-        if not doc_collection.has(target_key):
+        if not hasattr(doc_collection, 'has') or not doc_collection.has(target_key):
             logger.warning(f"Target document {target_key} does not exist")
-            return None
+            return ""
         
         # Generate edge ID
         edge_key = f"{source_key}_to_{target_key}_{relationship.relation_type.value}"
@@ -181,7 +213,7 @@ class ArangoStorage:
         
         # Check if edge already exists
         try:
-            if edge_collection.has(edge_key):
+            if hasattr(edge_collection, 'has') and edge_collection.has(edge_key):
                 logger.debug(f"Edge {edge_key} already exists, updating")
                 edge_collection.update(edge_data)
             else:
@@ -189,9 +221,9 @@ class ArangoStorage:
                 edge_collection.insert(edge_data)
         except Exception as e:
             logger.error(f"Error storing relationship {edge_key}: {e}")
-            return None
+            return ""
         
-        return edge_key
+        return str(edge_key)
     
     def store_dataset(self, dataset: IngestDataset) -> dict:
         """

@@ -41,7 +41,7 @@ class IngestDocument:
     metadata: Dict[str, Any] = field(default_factory=dict)
     embedding: Optional[List[float]] = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.title and self.content:
             # Extract a simple title from the first line if none provided
             self.title = self.content.split("\n")[0][:100]

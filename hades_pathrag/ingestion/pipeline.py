@@ -6,7 +6,7 @@ embedding, and storage of data for the PathRAG system.
 """
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, cast, ClassVar, Dict
 
 from hades_pathrag.ingestion.models import IngestDataset, IngestDocument, DocumentRelation
 from hades_pathrag.ingestion.loaders import DataLoader, TextDirectoryLoader, JSONLoader, CSVLoader
@@ -24,6 +24,11 @@ class IngestionPipeline:
     This class orchestrates the loading, embedding, and storage of data
     for the PathRAG system.
     """
+    # Class attributes with type annotations
+    db_connection: Optional[ArangoDBConnection]
+    embedding_processor: ISNEEmbeddingProcessor
+    storage: Optional[ArangoStorage]
+    loaders: Dict[str, DataLoader]
     
     def __init__(
         self,
@@ -48,6 +53,10 @@ class IngestionPipeline:
         self.db_connection = db_connection
         self.embedding_processor = embedding_processor or ISNEEmbeddingProcessor()
         
+        # Initialize storage as None by default
+        self.storage = None
+        
+        # Create ArangoStorage if db_connection is provided
         if db_connection:
             self.storage = ArangoStorage(
                 connection=db_connection,
@@ -56,8 +65,6 @@ class IngestionPipeline:
                 vector_collection=vector_collection,
                 graph_name=graph_name,
             )
-        else:
-            self.storage = None
         
         self.loaders = {
             "text_directory": TextDirectoryLoader(),
@@ -78,8 +85,8 @@ class IngestionPipeline:
     def load_data(
         self, 
         source: Union[str, Path],
-        loader_type: str = None,
-        **loader_kwargs
+        loader_type: Optional[str] = None,
+        **loader_kwargs: Any
     ) -> IngestDataset:
         """
         Load data from a source using the appropriate loader.
@@ -96,25 +103,29 @@ class IngestionPipeline:
         
         # Auto-detect loader type if not specified
         if loader_type is None:
-            if source_path.is_dir():
-                loader_type = "text_directory"
-            elif source_path.suffix.lower() == ".json":
-                loader_type = "json"
-            elif source_path.suffix.lower() in [".csv", ".tsv"]:
-                loader_type = "csv"
-            else:
-                raise ValueError(f"Could not determine loader type for {source}")
+            loader_type = self._detect_loader_type(source_path)
         
         # Get the loader
         if loader_type not in self.loaders:
             raise ValueError(f"Unknown loader type: {loader_type}")
-        
+            
         loader = self.loaders[loader_type]
         logger.info(f"Loading data from {source} using {loader_type} loader")
         
         # Load the data
         dataset = loader.load(source, **loader_kwargs)
         return dataset
+    
+    def _detect_loader_type(self, source_path: Path) -> str:
+        """Detect appropriate loader type based on the source path."""
+        if source_path.is_dir():
+            return "text_directory"
+        elif source_path.suffix.lower() == ".json":
+            return "json"
+        elif source_path.suffix.lower() in [".csv", ".tsv"]:
+            return "csv"
+        else:
+            raise ValueError(f"Could not determine loader type for {source_path}")
     
     def compute_embeddings(self, dataset: IngestDataset) -> IngestDataset:
         """
@@ -153,10 +164,10 @@ class IngestionPipeline:
     def ingest(
         self,
         source: Union[str, Path],
-        loader_type: str = None,
+        loader_type: Optional[str] = None,
         skip_embeddings: bool = False,
         skip_storage: bool = False,
-        **loader_kwargs
+        **loader_kwargs: Any
     ) -> Tuple[IngestDataset, Dict[str, Any]]:
         """
         Run the full ingestion pipeline on a data source.
@@ -186,7 +197,7 @@ class IngestionPipeline:
         return dataset, stats
         
 
-def create_pipeline_from_config(config):
+def create_pipeline_from_config(config: Any) -> IngestionPipeline:
     """
     Create an ingestion pipeline from a configuration.
     

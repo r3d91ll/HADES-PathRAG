@@ -72,7 +72,8 @@ class ArangoTransaction(StorageTransaction):
         
         try:
             # Start transaction
-            tx = db.begin_transaction(
+            # Using type ignore since the ArangoDB types don't have proper stubs
+            tx = db.begin_transaction(  # type: ignore
                 read=self.collections_read,
                 write=self.collections_write,
                 exclusive=self.collections_write,
@@ -101,7 +102,7 @@ class ArangoTransaction(StorageTransaction):
         # Get database connection and commit the transaction
         try:
             db = self.connection.connect()
-            db.commit_transaction(self._tx_id)
+            db.commit_transaction(self._tx_id)  # type: ignore
             self._active = False
             return True
         except TransactionCommitError as e:
@@ -124,7 +125,7 @@ class ArangoTransaction(StorageTransaction):
         # Get database connection and abort the transaction
         try:
             db = self.connection.connect()
-            db.abort_transaction(self._tx_id)
+            db.abort_transaction(self._tx_id)  # type: ignore
             self._active = False
             return True
         except TransactionAbortError as e:

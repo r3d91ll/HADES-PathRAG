@@ -8,6 +8,13 @@ python-arango>=8.0.0
 pydantic>=2.0.0
 tqdm>=4.0.0
 
+# PyTorch Geometric dependencies - install with specific CUDA version
+# pip install torch-scatter -f https://data.pyg.org/whl/torch-${TORCH_VERSION}+${CUDA_VERSION}.html
+# pip install torch-sparse -f https://data.pyg.org/whl/torch-${TORCH_VERSION}+${CUDA_VERSION}.html
+# pip install torch-geometric
+# Example: For torch-2.6.0+cu124:
+# pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
+
 # MCP Server dependencies
 fastapi>=0.115.0
 uvicorn>=0.34.0

@@ -201,15 +201,35 @@ def create_embedder_from_file(model_path: str) -> BaseEmbedder:
         raise ValueError(f"Failed to load embedder model: {e}")
 
 
-# Register embedders from external libraries if available
-try:
-    # Try to register Node2Vec if available
-    register_external_embedder("node2vec", "Node2Vec", "node2vec")
-except Exception:
-    pass
+# Register fallback embedder for safety
+from hades_pathrag.embeddings.fallback import FallbackEmbedder
+EmbedderRegistry.register("fallback", FallbackEmbedder)
+logger.info("Registered fallback embedder")
 
-try:
-    # Try to register SentenceTransformer if available
-    register_external_embedder("sentence_transformers", "SentenceTransformer", "sentence-bert")
-except Exception:
-    pass
+# Handle external embedders without strict inheritance checking
+# Instead of trying to import and register them directly, create detection functions
+
+# Check if node2vec is available
+def node2vec_available() -> bool:
+    """Check if node2vec is available."""
+    try:
+        import node2vec
+        return True
+    except ImportError:
+        return False
+
+# Check if sentence_transformers is available
+def sentence_transformers_available() -> bool:
+    """Check if sentence_transformers is available."""
+    try:
+        import sentence_transformers
+        return True
+    except ImportError:
+        return False
+
+# Log availability of external embedders
+logger.info(f"Node2Vec available: {node2vec_available()}")
+logger.info(f"SentenceTransformer available: {sentence_transformers_available()}")
+
+# The ModernBERT embedder should already be registered by the semantic module
+# We'll rely on that instead of trying to register external embedders directly

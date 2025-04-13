@@ -11,8 +11,9 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable, Awaitable, TypeVar, cast
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -85,8 +86,11 @@ TOOLS = [
 ]
 
 
+# Define tool function type
+ToolFunc = Callable[..., Awaitable[Any]]
+
 # Tool implementations mapping
-TOOL_IMPLEMENTATIONS = {
+TOOL_IMPLEMENTATIONS: Dict[str, ToolFunc] = {
     "retrieve_path": pathrag_tools.retrieve_path,
     "semantic_search": pathrag_tools.semantic_search,
     "embed_document": pathrag_tools.embed_document,
@@ -106,32 +110,98 @@ async def handle_jsonrpc(request: Request) -> JSONResponse:
     This is the main entry point for MCP clients to interact with the server.
     """
     try:
-        body = await request.json()
+        # Set a log marker for better tracing
+        request_id = f"req_{int(time.time())}_{id(request)}"
+        logger.debug(f"🔄 [{request_id}] Received new JSON-RPC request")
         
-        # Validate request
-        if not isinstance(body, dict) or "type" not in body:
+        # Parse the request body with error handling
+        try:
+            body = await request.json()
+            logger.debug(f"📄 [{request_id}] Request body: {body}")
+        except Exception as json_err:
+            logger.error(f"❌ [{request_id}] Failed to parse JSON: {json_err}")
             return JSONResponse(
                 status_code=400,
-                content={"error": "Invalid request format"}
+                content={"error": "Invalid JSON in request body"}
             )
         
-        # Handle request based on type
-        if body["type"] == "request":
-            return await handle_mcp_request(body)
+        # Validate request format
+        if not isinstance(body, dict):
+            logger.error(f"❌ [{request_id}] Request body is not a dictionary")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Request body must be a JSON object"}
+            )
+        
+        if "type" not in body:
+            logger.error(f"❌ [{request_id}] Request missing 'type' field")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing 'type' field in request"}
+            )
+        
+        # Handle request based on type - with specific handling for tools/list
+        if body["type"] == "request" and body.get("method") == "tools/list":
+            # Fast path for tool listing - most frequent and simplest operation
+            logger.debug(f"🔍 [{request_id}] Processing tools/list request")
+            req_id = body.get("id", "unknown")
+            
+            # Return tools list directly without further processing
+            result = {"tools": TOOLS}
+            response = {
+                "type": "response",
+                "id": req_id,
+                "result": result
+            }
+            logger.debug(f"✅ [{request_id}] Completed tools/list request")
+            return JSONResponse(status_code=200, content=response)
+        elif body["type"] == "request":
+            # Process other requests through the normal handler
+            logger.debug(f"🔄 [{request_id}] Processing regular request: {body.get('method')}")
+            try:
+                # Just return the response directly as it's already a JSONResponse
+                response = await handle_mcp_request(body)
+                logger.debug(f"✅ [{request_id}] Completed request")
+                return response
+            except asyncio.TimeoutError:
+                logger.error(f"⏱️ [{request_id}] Request timed out")
+                return JSONResponse(
+                    status_code=504,  # Gateway Timeout
+                    content={
+                        "type": "response",
+                        "id": body.get("id"),
+                        "error": {
+                            "code": -32001,
+                            "message": "Request timed out"
+                        }
+                    }
+                )
         elif body["type"] == "notification":
+            # Process notifications
+            logger.debug(f"📢 [{request_id}] Processing notification")
             await handle_mcp_notification(body)
+            logger.debug(f"✅ [{request_id}] Completed notification")
             return JSONResponse(status_code=204, content=None)
         else:
+            # Handle unsupported message types
+            logger.error(f"❌ [{request_id}] Unsupported message type: {body['type']}")
             return JSONResponse(
                 status_code=400,
-                content={"error": f"Unsupported message type: {body['type']}"}
+                content={
+                    "error": f"Unsupported message type: {body['type']}"
+                }
             )
-    
     except Exception as e:
-        logger.exception(f"Error handling JSON-RPC request: {e}")
+        # Log the full exception with traceback
+        import traceback
+        logger.error(f"❌ Error handling JSON-RPC request: {e}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        
         return JSONResponse(
             status_code=500,
-            content={"error": f"Internal server error: {str(e)}"}
+            content={
+                "error": f"Internal server error: {str(e)}"
+            }
         )
 
 
@@ -145,9 +215,14 @@ async def handle_mcp_request(request: Dict[str, Any]) -> JSONResponse:
     Returns:
         A JSON response
     """
+    # Generate a unique trace ID for this request for tracking across logs
+    trace_id = f"trace_{int(time.time())}_{id(request)}"
+    
     method = request.get("method")
     params = request.get("params", {})
     request_id = request.get("id")
+    
+    logger.debug(f"[{trace_id}] 🔍 Processing request: method={method}, id={request_id}")
     
     if method == "tools/list":
         # Return the list of available tools
@@ -179,7 +254,7 @@ async def handle_mcp_request(request: Dict[str, Any]) -> JSONResponse:
                 }
             )
         
-        tool_func = TOOL_IMPLEMENTATIONS.get(tool_name)
+        tool_func: Optional[ToolFunc] = TOOL_IMPLEMENTATIONS.get(tool_name)
         if not tool_func:
             return JSONResponse(
                 status_code=404,
@@ -194,8 +269,77 @@ async def handle_mcp_request(request: Dict[str, Any]) -> JSONResponse:
             )
         
         try:
-            # Call the tool function
-            result = await tool_func(**args)
+            # Call the tool function with proper type casting and timeout handling
+            tool_callable = cast(ToolFunc, tool_func)
+            
+            # Add timeout handling to prevent server hanging
+            config = get_config()
+            timeout_seconds = getattr(config.server, "timeout_seconds", 60)  # Default to 60s if not configured
+            
+            # Log the request details for debugging
+            logger.debug(f"Calling tool '{tool_name}' with args: {args}")
+            logger.debug(f"Using timeout of {timeout_seconds} seconds")
+            
+            # Create a task with timeout
+            try:
+                # Add more detailed logging for troubleshooting
+                start_time = time.time()
+                logger.debug(f"⏱️ Starting tool '{tool_name}' at {time.strftime('%H:%M:%S')}")
+                
+                # Add progress tracking for long-running operations
+                progress_task = None
+                
+                # Create helper function for periodic progress logging
+                progress_counter = 0  # Define this outside the function
+                
+                # Extract the log progress function to avoid nested function issues
+                async def _log_tool_progress(tool: str, start: float) -> None:
+                    nonlocal progress_counter
+                    progress_counter += 1
+                    elapsed = time.time() - start
+                    logger.debug(f"⏳ Tool '{tool}' still running after {elapsed:.2f}s (progress check #{progress_counter})")
+                
+                # Create the tracking loop function
+                async def log_progress() -> None:
+                    while True:
+                        await asyncio.sleep(5.0)  # Log every 5 seconds
+                        await _log_tool_progress(tool_name, start_time)
+                
+                # Start progress tracking
+                progress_task = asyncio.create_task(log_progress())
+                
+                # Use asyncio.wait_for to apply a timeout
+                try:
+                    result = await asyncio.wait_for(
+                        tool_callable(**args),
+                        timeout=timeout_seconds
+                    )
+                finally:
+                    # Clean up progress task if it's still running
+                    if progress_task and not progress_task.done():
+                        progress_task.cancel()
+                        try:
+                            await progress_task
+                        except asyncio.CancelledError:
+                            pass
+                
+                elapsed_time = time.time() - start_time
+                logger.debug(f"✅ Tool '{tool_name}' completed successfully in {elapsed_time:.2f}s")
+            except asyncio.TimeoutError:
+                elapsed = time.time() - start_time
+                logger.error(f"⏱️ Tool '{tool_name}' TIMED OUT after {elapsed:.2f}s (limit: {timeout_seconds}s)")
+                logger.error(f"TIMEOUT DETAILS: tool={tool_name}, args={args}")
+                return JSONResponse(
+                    status_code=504,  # Gateway Timeout
+                    content={
+                        "type": "response",
+                        "id": request_id,
+                        "error": {
+                            "code": -32001,
+                            "message": f"Request timed out after {timeout_seconds} seconds"
+                        }
+                    }
+                )
             
             # Format the response according to MCP
             content = format_tool_result(result)
@@ -211,7 +355,10 @@ async def handle_mcp_request(request: Dict[str, Any]) -> JSONResponse:
                 }
             )
         except Exception as e:
-            logger.exception(f"Error calling tool {tool_name}: {e}")
+            import traceback
+            logger.error(f"❌ Error calling tool {tool_name}: {e}")
+            logger.error(f"EXCEPTION DETAILS: tool={tool_name}, args={args}")
+            logger.error(f"Stack trace: {traceback.format_exc()}")
             return JSONResponse(
                 status_code=500,
                 content={
@@ -261,21 +408,32 @@ def format_tool_result(result: Any) -> List[Dict[str, Any]]:
         result: The tool result
         
     Returns:
-        A list of content items
+        A list of content items in the MCP format
     """
+    # Handle None values safely
+    if result is None:
+        return [{"type": "text", "text": ""}]
+        
     # Handle dictionaries and list results
     if isinstance(result, dict) or isinstance(result, list):
-        return [{"type": "text", "text": json.dumps(result, indent=2)}]
+        try:
+            # Use a safer JSON serialization approach
+            text = json.dumps(result, indent=2, default=str)
+            return [{"type": "text", "text": text}]
+        except Exception as e:
+            # Fallback for non-serializable objects
+            logger.warning(f"Error serializing result to JSON: {e}")
+            return [{"type": "text", "text": f"Result (not JSON serializable): {str(result)}"}]
     
     # Handle simple types
     if isinstance(result, (str, int, float, bool)):
         return [{"type": "text", "text": str(result)}]
     
-    # Fall back to string representation
-    return [{"type": "text", "text": str(result)}]
+    # Fall back to string representation with type information
+    return [{"type": "text", "text": f"Result ({type(result).__name__}): {str(result)}"}]
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="HADES-PathRAG MCP Server")
     
@@ -313,7 +471,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_args()
     
