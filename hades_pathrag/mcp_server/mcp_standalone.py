@@ -148,21 +148,28 @@ async def handle_jsonrpc(request: Request) -> JSONResponse:
             
             # Return tools list directly without further processing
             result = {"tools": TOOLS}
-            response = {
+            response_content = {
                 "type": "response",
                 "id": req_id,
                 "result": result
             }
             logger.debug(f"✅ [{request_id}] Completed tools/list request")
-            return JSONResponse(status_code=200, content=response)
+            return JSONResponse(status_code=200, content=response_content)
         elif body["type"] == "request":
             # Process other requests through the normal handler
             logger.debug(f"🔄 [{request_id}] Processing regular request: {body.get('method')}")
             try:
-                # Just return the response directly as it's already a JSONResponse
-                response = await handle_mcp_request(body)
+                # Get the response from the handler
+                result = await handle_mcp_request(body)
                 logger.debug(f"✅ [{request_id}] Completed request")
-                return response
+                
+                # Ensure we're returning a JSONResponse (to satisfy type checker)
+                if isinstance(result, dict):
+                    # Convert dict to JSONResponse if needed
+                    return JSONResponse(status_code=200, content=result)
+                else:
+                    # It's already a JSONResponse
+                    return result
             except asyncio.TimeoutError:
                 logger.error(f"⏱️ [{request_id}] Request timed out")
                 return JSONResponse(
