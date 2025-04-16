@@ -9,11 +9,9 @@ from typing import List, Dict, Any, Optional, Set, Tuple, Union, Type, TypeVar
 
 # Type variables for storage classes
 T = TypeVar('T', bound='BaseStorage')
-NodeID = str
 
-# Import numpy for type annotations
-import numpy as np
-Embedding = np.ndarray
+# Import centralized type definitions
+from hades_pathrag.typings import NodeIDType, EmbeddingArray
 
 # Import base classes and interfaces
 from .base import (
@@ -41,8 +39,8 @@ from .factory import (
 # __all__ defines the public API
 __all__: List[str] = [
     # Type definitions
-    'NodeID',
-    'Embedding',
+    'NodeIDType',
+    'EmbeddingArray',
     
     # Base classes and interfaces
     'BaseStorage',

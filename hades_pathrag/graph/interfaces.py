@@ -8,15 +8,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Any, TypeVar, Generic, Protocol, Union
 
-import networkx as nx
+import networkx as nx  # type: ignore[attr-defined]
 import numpy as np
 from pydantic import BaseModel, Field
 
-from .base import BaseGraph, Path, NodeID, EdgeID, Weight
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    NodeIDType, NodeData, EdgeData, PathType, Graph, DiGraph
+)
 
-# Type definitions
-NodeAttrs = Dict[str, Any]
-EdgeAttrs = Dict[str, Any]
+from .base import BaseGraph, Path, EdgeID, Weight
 
 
 class PathScoringConfig(BaseModel):
@@ -252,7 +253,7 @@ class AnalyzableGraph(Protocol):
         pass
     
     @abstractmethod
-    def get_subgraph(self, node_ids: Set[NodeID]) -> 'AnalyzableGraph':
+    def get_subgraph(self, node_ids: Set[NodeIDType]) -> 'AnalyzableGraph':
         """
         Extract a subgraph containing only the specified nodes.
         

@@ -13,7 +13,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Callable, Awaitable, TypeVar, cast
+from typing import Dict, List, Any, Optional, Callable, Awaitable, TypeVar, cast, Union
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -160,16 +160,18 @@ async def handle_jsonrpc(request: Request) -> JSONResponse:
             logger.debug(f"🔄 [{request_id}] Processing regular request: {body.get('method')}")
             try:
                 # Get the response from the handler
-                result = await handle_mcp_request(body)
+                from typing import Dict, Any, Union
+                from fastapi.responses import JSONResponse
+                request_result: Union[Dict[str, Any], JSONResponse] = await handle_mcp_request(body)
                 logger.debug(f"✅ [{request_id}] Completed request")
                 
                 # Ensure we're returning a JSONResponse (to satisfy type checker)
-                if isinstance(result, dict):
-                    # Convert dict to JSONResponse if needed
-                    return JSONResponse(status_code=200, content=result)
-                else:
+                if isinstance(request_result, JSONResponse):
                     # It's already a JSONResponse
-                    return result
+                    return request_result
+                else:
+                    # Convert any result (dict or otherwise) to JSONResponse
+                    return JSONResponse(status_code=200, content={"result": request_result} if not isinstance(request_result, dict) else request_result)
             except asyncio.TimeoutError:
                 logger.error(f"⏱️ [{request_id}] Request timed out")
                 return JSONResponse(
@@ -212,7 +214,7 @@ async def handle_jsonrpc(request: Request) -> JSONResponse:
         )
 
 
-async def handle_mcp_request(request: Dict[str, Any]) -> JSONResponse:
+async def handle_mcp_request(request: Dict[str, Any]) -> Union[Dict[str, Any], JSONResponse]:
     """
     Handle an MCP request message.
     

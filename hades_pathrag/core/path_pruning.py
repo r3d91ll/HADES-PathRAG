@@ -14,7 +14,8 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 
-from ..graph.base import Path, NodeID, EdgeID
+from ..graph.base import Path, EdgeID
+from ..typings import NodeIDType
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class PathResource:
     """Resource allocation for a path."""
     
     # Path nodes
-    nodes: List[NodeID]
+    nodes: List[NodeIDType]
     
     # Path edges (with attributes)
     edges: List[Dict[str, Any]]
@@ -71,7 +72,7 @@ class PathResource:
     reliability: float
     
     # Resource value at each node
-    node_resources: Dict[NodeID, float] = field(default_factory=dict)
+    node_resources: Dict[NodeIDType, float] = field(default_factory=dict)
     
     # Parent path (for tracking origin)
     parent_path: Optional['PathResource'] = None
@@ -86,7 +87,7 @@ class PathResource:
         """Comparison for priority queue."""
         return self.reliability > other.reliability
     
-    def add_node(self, node_id: NodeID, resource: float, edge: Dict[str, Any]) -> 'PathResource':
+    def add_node(self, node_id: NodeIDType, resource: float, edge: Dict[str, Any]) -> 'PathResource':
         """Add a node to this path with the given resource level."""
         new_nodes = self.nodes.copy()
         new_nodes.append(node_id)
@@ -109,7 +110,7 @@ class PathResource:
         """Convert to Path object."""
         # Extract edge IDs from edge dictionaries
         edge_ids: List[EdgeID] = []
-        edge_weights: Dict[Tuple[NodeID, NodeID], float] = {}
+        edge_weights: Dict[Tuple[NodeIDType, NodeIDType], float] = {}
         
         for i, edge_dict in enumerate(self.edges):
             # Extract or generate edge ID - use 'id' field if present, otherwise generate one
@@ -132,7 +133,7 @@ class PathResource:
             edge_weights=edge_weights
         )
     
-    def nodes_set(self) -> Set[NodeID]:
+    def nodes_set(self) -> Set[NodeIDType]:
         """Return set of nodes in this path."""
         return set(self.nodes)
     
@@ -153,9 +154,9 @@ class PathResource:
 
 def calculate_propagation_weights(
     graph: nx.Graph,
-    node_id: NodeID,
+    node_id: NodeIDType,
     allocation_method: str = 'proportional'
-) -> Dict[NodeID, float]:
+) -> Dict[NodeIDType, float]:
     """
     Calculate propagation weights for a node's neighbors.
     
@@ -168,7 +169,7 @@ def calculate_propagation_weights(
         Dictionary mapping neighbor node IDs to weight values
     """
     neighbors = list(graph.neighbors(node_id))
-    weights: Dict[NodeID, float] = {}
+    weights: Dict[NodeIDType, float] = {}
     
     if not neighbors:
         return weights
@@ -203,9 +204,9 @@ def calculate_propagation_weights(
 
 def propagate_resources(
     graph: nx.Graph,
-    source_nodes: Dict[NodeID, float],
+    source_nodes: Dict[NodeIDType, float],
     config: PathPruningConfig
-) -> Dict[Tuple[NodeID, NodeID], List[PathResource]]:
+) -> Dict[Tuple[NodeIDType, NodeIDType], List[PathResource]]:
     """
     Propagate resources through the graph and extract paths.
     
@@ -220,7 +221,7 @@ def propagate_resources(
     Returns:
         Dictionary mapping (source, target) pairs to lists of paths
     """
-    paths: Dict[Tuple[NodeID, NodeID], List[PathResource]] = defaultdict(list)
+    paths: Dict[Tuple[NodeIDType, NodeIDType], List[PathResource]] = defaultdict(list)
     visited_edges = set()
     
     # Queue of active paths (priority is reliability)
@@ -378,7 +379,7 @@ def calculate_path_diversity(paths: List[PathResource]) -> List[PathResource]:
 
 def extract_paths_with_pruning(
     graph: nx.Graph,
-    source_nodes: Dict[NodeID, float],
+    source_nodes: Dict[NodeIDType, float],
     config: Optional[PathPruningConfig] = None
 ) -> List[Path]:
     """

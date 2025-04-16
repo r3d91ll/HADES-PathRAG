@@ -14,8 +14,9 @@ import numpy as np
 import networkx as nx
 
 from ..embeddings.base import BaseEmbedder
-from ..graph.base import BaseGraph, Path, NodeID
+from ..graph.base import BaseGraph, Path
 from ..storage.base import BaseVectorStorage, BaseDocumentStorage, BaseGraphStorage
+from ..typings import NodeIDType
 from ..storage.interfaces import MetadataQuery, MetadataCondition, QueryOperator
 from ..utils.text import extract_entities
 from .config import PathRAGConfig
@@ -79,7 +80,7 @@ class PathRAG:
         
         logger.info("PathRAG initialized with %s embedder", self.config.embedding_model)
     
-    def add_document(self, doc_id: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> List[NodeID]:
+    def add_document(self, doc_id: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> List[NodeIDType]:
         """
         Add a document to the system, creating nodes for its content.
         
@@ -117,7 +118,7 @@ class PathRAG:
         edges = self._extract_relationships(nodes, doc_id)
         
         # Add nodes and edges to graph
-        node_ids: List[NodeID] = []
+        node_ids: List[NodeIDType] = []
         nodes_created = 0
         nodes_updated = 0
         
@@ -190,7 +191,7 @@ class PathRAG:
         
         return node_ids
     
-    def _generate_inductive_embeddings(self, node_ids: List[NodeID]) -> None:
+    def _generate_inductive_embeddings(self, node_ids: List[NodeIDType]) -> None:
         """
         Generate embeddings for nodes in inductive mode.
         
@@ -226,9 +227,12 @@ class PathRAG:
         
         # Extract networkx graph for training
         nx_graph = self.graph.to_networkx()
-        node_count = len(nx_graph.nodes)
+        # Cast to appropriate types to satisfy mypy
+        nodes = list(nx_graph.nodes())
+        edges = list(nx_graph.edges())
+        node_count = len(nodes)
         
-        logger.info(f"Graph extracted for training: {node_count} nodes, {len(nx_graph.edges)} edges")
+        logger.info(f"Graph extracted for training: {node_count} nodes, {len(edges)} edges")
         
         # Retrain embedder
         self.embedder.fit(nx_graph)
@@ -271,7 +275,7 @@ class PathRAG:
         elapsed = time.time() - start_time
         logger.info(f"Embedding retraining completed: {processed} embeddings updated in {elapsed:.2f}s")
     
-    def _extract_relationships(self, nodes: Dict[NodeID, Dict[str, Any]], doc_id: str) -> List[Dict[str, Any]]:
+    def _extract_relationships(self, nodes: Dict[NodeIDType, Dict[str, Any]], doc_id: str) -> List[Dict[str, Any]]:
         """
         Extract relationships between nodes.
         
@@ -494,7 +498,7 @@ class PathRAG:
         doc_id: str, 
         content: str, 
         metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[NodeID, Dict[str, Any]]:
+    ) -> Dict[NodeIDType, Dict[str, Any]]:
         """
         Process a document into nodes for the graph.
         
@@ -509,7 +513,7 @@ class PathRAG:
         Returns:
             Dictionary mapping node IDs to node attributes
         """
-        nodes: Dict[NodeID, Dict[str, Any]] = {}
+        nodes: Dict[NodeIDType, Dict[str, Any]] = {}
         
         # Create document node
         doc_node_id = f"doc-{doc_id}"

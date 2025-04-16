@@ -5,15 +5,20 @@ This module defines the abstract base classes for vector, document, and
 graph storage operations.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, TypeVar, Generic, Any, Set, Tuple, Type
+from typing import Dict, List, Optional, TypeVar, Generic, Any, Set, Tuple, Type, Union
 
 import numpy as np
+
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    EmbeddingArray, NodeIDType, NodeData, EdgeData
+)
 
 # Type variables for storage classes
 T = TypeVar('T', bound='BaseStorage')
 VT = TypeVar('VT', bound='BaseVectorStorage')
-NodeID = str
-Embedding = np.ndarray
+DT = TypeVar('DT', bound='BaseDocumentStorage')
+GT = TypeVar('GT', bound='BaseGraphStorage')
 
 
 class BaseStorage(ABC):
@@ -38,7 +43,7 @@ class BaseVectorStorage(BaseStorage):
     """Base class for vector storage implementations."""
     
     @abstractmethod
-    def store_embedding(self, node_id: NodeID, embedding: Embedding, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def store_embedding(self, node_id: NodeIDType, embedding: EmbeddingArray, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Store a node embedding with optional metadata.
         
@@ -50,7 +55,7 @@ class BaseVectorStorage(BaseStorage):
         pass
     
     @abstractmethod
-    def get_embedding(self, node_id: NodeID) -> Optional[Embedding]:
+    def get_embedding(self, node_id: NodeIDType) -> Optional[EmbeddingArray]:
         """
         Get embedding by node ID.
         
@@ -65,10 +70,10 @@ class BaseVectorStorage(BaseStorage):
     @abstractmethod
     def retrieve_similar(
         self, 
-        query_embedding: Embedding, 
+        query_embedding: EmbeddingArray, 
         k: int = 10,
         filter_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[Tuple[NodeID, float, Dict[str, Any]]]:
+    ) -> List[Tuple[NodeIDType, float, Dict[str, Any]]]:
         """
         Find nodes with embeddings similar to the query embedding.
         
@@ -83,7 +88,7 @@ class BaseVectorStorage(BaseStorage):
         pass
     
     @abstractmethod
-    def delete_embedding(self, node_id: NodeID) -> bool:
+    def delete_embedding(self, node_id: NodeIDType) -> bool:
         """
         Delete a node embedding.
         
@@ -96,7 +101,7 @@ class BaseVectorStorage(BaseStorage):
         pass
     
     @abstractmethod
-    def update_metadata(self, node_id: NodeID, metadata: Dict[str, Any]) -> bool:
+    def update_metadata(self, node_id: NodeIDType, metadata: Dict[str, Any]) -> bool:
         """
         Update metadata for a node embedding.
         
@@ -169,7 +174,7 @@ class BaseGraphStorage(BaseStorage):
     """Base class for graph storage implementations integrating with BaseGraph."""
     
     @abstractmethod
-    def store_node(self, node_id: NodeID, attributes: Dict[str, Any]) -> None:
+    def store_node(self, node_id: NodeIDType, attributes: NodeData) -> None:
         """
         Store a node with attributes.
         
@@ -182,11 +187,11 @@ class BaseGraphStorage(BaseStorage):
     @abstractmethod
     def store_edge(
         self,
-        source_id: NodeID,
-        target_id: NodeID,
+        source_id: NodeIDType,
+        target_id: NodeIDType,
         relation_type: str,
         weight: float = 1.0,
-        attributes: Optional[Dict[str, Any]] = None
+        attributes: Optional[EdgeData] = None
     ) -> None:
         """
         Store an edge between nodes.
@@ -201,7 +206,7 @@ class BaseGraphStorage(BaseStorage):
         pass
     
     @abstractmethod
-    def get_node(self, node_id: NodeID) -> Optional[Dict[str, Any]]:
+    def get_node(self, node_id: NodeIDType) -> Optional[NodeData]:
         """
         Get node by ID.
         
@@ -216,10 +221,10 @@ class BaseGraphStorage(BaseStorage):
     @abstractmethod
     def get_neighbors(
         self, 
-        node_id: NodeID, 
+        node_id: NodeIDType, 
         direction: str = "outbound", 
         relation_types: Optional[List[str]] = None
-    ) -> List[Tuple[NodeID, str, float]]:
+    ) -> List[Tuple[NodeIDType, str, float]]:
         """
         Get neighbors of a node.
         
@@ -236,7 +241,7 @@ class BaseGraphStorage(BaseStorage):
     @abstractmethod
     def query_subgraph(
         self,
-        start_nodes: List[NodeID],
+        start_nodes: List[NodeIDType],
         max_depth: int = 2,
         relation_types: Optional[List[str]] = None
     ) -> Dict[str, Any]:

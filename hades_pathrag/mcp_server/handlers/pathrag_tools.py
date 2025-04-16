@@ -138,7 +138,7 @@ async def embed_document(
         # with an explicit timeout
         start_time = time.time()
         
-        def embed_doc_worker():
+        def embed_doc_worker() -> IngestDocument:
             return embedding_processor.embed_document(doc)
             
         # Create a thread executor for the CPU-intensive embedding task
@@ -147,26 +147,24 @@ async def embed_document(
                 # Convert the sync task to an async future
                 loop = asyncio.get_event_loop()
                 embedding_future = loop.run_in_executor(executor, embed_doc_worker)
-                
                 # Wait for the embedding with a timeout
-                embedded_doc = await asyncio.wait_for(embedding_future, timeout=timeout_seconds)
+                result_doc = await asyncio.wait_for(embedding_future, timeout=timeout_seconds)
                 embed_time = time.time() - start_time
                 logger.debug(f"⏱️ Document embedded in {embed_time:.2f} seconds")
-                return embedded_doc
             except asyncio.TimeoutError:
                 logger.error(f"⏱️ Embedding timed out after {timeout_seconds} seconds")
                 # Return a placeholder embedding to avoid breaking the pipeline
                 doc.embedding = [0.0] * (metadata.get("embedding_dim", 768) if metadata else 768)
-                return doc
-        
-        # Check if we got a valid embedding
-        if embedded_doc.embedding is None:
+                result_doc = doc  # type: ignore
+
+        # At this point, result_doc is guaranteed to exist
+        if result_doc.embedding is None:
             logger.warning("⚠️ Embedded document has no embedding vector!")
             embedding_length = 0
         else:
-            embedding_length = len(embedded_doc.embedding)
+            embedding_length = len(result_doc.embedding)
             logger.debug(f"✅ Generated embedding with dimension: {embedding_length}")
-        
+
         # Return information about the embedding
         embedding_info = {
             "document_id": embedded_doc.id,

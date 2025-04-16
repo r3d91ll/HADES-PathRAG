@@ -7,14 +7,18 @@ storage operations in the PathRAG framework.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, List, Optional, Set, Tuple, Any, TypeVar, Generic, Protocol, Union
+from typing import Dict, List, Optional, Set, Tuple, Any, TypeVar, Generic, Protocol, Union, runtime_checkable
 
 import numpy as np
 from pydantic import BaseModel, Field
 
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    EmbeddingArray, NodeIDType, NodeData, EdgeData, PathType
+)
+
 from .base import (
-    BaseStorage, BaseVectorStorage, BaseDocumentStorage, BaseGraphStorage,
-    NodeID, Embedding
+    BaseStorage, BaseVectorStorage, BaseDocumentStorage, BaseGraphStorage
 )
 
 
@@ -138,13 +142,14 @@ class MetadataQuery(BaseModel):
     )
 
 
+@runtime_checkable
 class EnhancedVectorStorage(Protocol):
     """Protocol for enhanced vector storage implementations."""
     
     @abstractmethod
     def bulk_store_embeddings(
         self, 
-        items: List[Tuple[NodeID, Embedding, Optional[Dict[str, Any]]]]
+        items: List[Tuple[NodeIDType, EmbeddingArray, Optional[Dict[str, Any]]]]
     ) -> BulkOperationResult:
         """
         Store multiple embeddings in a single batch operation.
@@ -162,7 +167,7 @@ class EnhancedVectorStorage(Protocol):
         self, 
         query: MetadataQuery,
         limit: int = 100
-    ) -> List[Tuple[NodeID, Dict[str, Any]]]:
+    ) -> List[Tuple[NodeIDType, Dict[str, Any]]]:
         """
         Find nodes by metadata query.
         
@@ -178,11 +183,11 @@ class EnhancedVectorStorage(Protocol):
     @abstractmethod
     def hybrid_search(
         self,
-        query_embedding: Embedding,
+        query_embedding: EmbeddingArray,
         metadata_query: MetadataQuery,
         k: int = 10,
         vector_weight: float = 0.5
-    ) -> List[Tuple[NodeID, float, Dict[str, Any]]]:
+    ) -> List[Tuple[NodeIDType, float, Dict[str, Any]]]:
         """
         Perform hybrid search combining vector similarity and metadata filtering.
         
@@ -208,6 +213,7 @@ class EnhancedVectorStorage(Protocol):
         ...
 
 
+@runtime_checkable
 class EnhancedDocumentStorage(Protocol):
     """Protocol for enhanced document storage implementations."""
     
@@ -296,13 +302,14 @@ class EnhancedDocumentStorage(Protocol):
         ...
 
 
+@runtime_checkable
 class EnhancedGraphStorage(Protocol):
     """Protocol for enhanced graph storage implementations."""
     
     @abstractmethod
     def bulk_store_nodes(
         self,
-        nodes: List[Tuple[NodeID, Dict[str, Any]]]
+        nodes: List[Tuple[NodeIDType, NodeData]]
     ) -> BulkOperationResult:
         """
         Store multiple nodes in a single batch operation.
@@ -318,7 +325,7 @@ class EnhancedGraphStorage(Protocol):
     @abstractmethod
     def bulk_store_edges(
         self,
-        edges: List[Tuple[NodeID, NodeID, str, float, Optional[Dict[str, Any]]]]
+        edges: List[Tuple[NodeIDType, NodeIDType, str, float, Optional[EdgeData]]]
     ) -> BulkOperationResult:
         """
         Store multiple edges in a single batch operation.
@@ -334,10 +341,10 @@ class EnhancedGraphStorage(Protocol):
     @abstractmethod
     def find_shortest_path(
         self,
-        source_id: NodeID,
-        target_id: NodeID,
+        source_id: NodeIDType,
+        target_id: NodeIDType,
         max_depth: int = 5
-    ) -> Optional[List[NodeID]]:
+    ) -> Optional[PathType]:
         """
         Find the shortest path between two nodes.
         
@@ -354,7 +361,7 @@ class EnhancedGraphStorage(Protocol):
     @abstractmethod
     def get_node_degree(
         self,
-        node_id: NodeID,
+        node_id: NodeIDType,
         direction: str = "outbound"
     ) -> int:
         """
@@ -370,7 +377,7 @@ class EnhancedGraphStorage(Protocol):
         ...
     
     @abstractmethod
-    def get_connected_components(self) -> List[Set[NodeID]]:
+    def get_connected_components(self) -> List[Set[NodeIDType]]:
         """
         Get all connected components in the graph.
         

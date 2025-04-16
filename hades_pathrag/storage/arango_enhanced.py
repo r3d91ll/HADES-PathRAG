@@ -11,7 +11,7 @@ from datetime import datetime
 import json
 
 import numpy as np
-from arango import ArangoClient
+from arango import ArangoClient  # type: ignore[attr-defined]
 from arango.database import Database
 from arango.collection import Collection
 from arango.graph import Graph as ArangoGraph
@@ -23,13 +23,20 @@ from arango.exceptions import (
     AQLQueryExecuteError,
 )
 
-from .base import BaseVectorStorage, BaseDocumentStorage, BaseGraphStorage, NodeID, Embedding
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    NodeIDType, NodeData, EdgeData, EmbeddingArray
+)
+
+from .base import BaseVectorStorage, BaseDocumentStorage, BaseGraphStorage
 from .arango import ArangoDBConnection, ArangoVectorStorage, ArangoDocumentStorage, ArangoGraphStorage
 from .interfaces import (
     EnhancedVectorStorage, EnhancedDocumentStorage, EnhancedGraphStorage,
     StorageStats, DocumentChunk, BulkOperationResult,
     QueryOperator, MetadataCondition, MetadataQuery, StorageTransaction
 )
+from .edge_types import EDGE_TYPES, EdgeCategory, get_edge_weight, create_edge_data
+from .path_traversal import PathQuery, PathResult, execute_path_query, find_paths_between, expand_paths_from_nodes
 from ..utils.text import chunk_text
 
 logger = logging.getLogger(__name__)
@@ -46,7 +53,7 @@ class EnhancedArangoVectorStorage(ArangoVectorStorage):
     
     def bulk_store_embeddings(
         self, 
-        items: List[Tuple[NodeID, Embedding, Optional[Dict[str, Any]]]]
+        items: List[Tuple[NodeIDType, EmbeddingArray, Optional[Dict[str, Any]]]]
     ) -> BulkOperationResult:
         """
         Store multiple embeddings in a single batch operation.
@@ -116,7 +123,7 @@ class EnhancedArangoVectorStorage(ArangoVectorStorage):
         self, 
         query: MetadataQuery,
         limit: int = 100
-    ) -> List[Tuple[NodeID, Dict[str, Any]]]:
+    ) -> List[Tuple[NodeIDType, Dict[str, Any]]]:
         """
         Find nodes by metadata query.
         
@@ -191,7 +198,7 @@ class EnhancedArangoVectorStorage(ArangoVectorStorage):
             cursor = db.aql.execute(aql, bind_vars=bind_vars)
             
             # Process results
-            results: List[Tuple[NodeID, Dict[str, Any]]] = []
+            results: List[Tuple[NodeIDType, Dict[str, Any]]] = []
             for doc in cursor:
                 node_id = doc["id"]
                 metadata = doc["metadata"]
@@ -209,11 +216,11 @@ class EnhancedArangoVectorStorage(ArangoVectorStorage):
     
     def hybrid_search(
         self,
-        query_embedding: Embedding,
+        query_embedding: EmbeddingArray,
         metadata_query: MetadataQuery,
         k: int = 10,
         vector_weight: float = 0.5
-    ) -> List[Tuple[NodeID, float, Dict[str, Any]]]:
+    ) -> List[Tuple[NodeIDType, float, Dict[str, Any]]]:
         """
         Perform hybrid search combining vector similarity and metadata filtering.
         
@@ -309,7 +316,7 @@ class EnhancedArangoVectorStorage(ArangoVectorStorage):
             cursor = db.aql.execute(aql, bind_vars=bind_vars)
             
             # Process results
-            results: List[Tuple[NodeID, float, Dict[str, Any]]] = []
+            results: List[Tuple[NodeIDType, float, Dict[str, Any]]] = []
             for doc in cursor:
                 node_id = doc["id"]
                 score = doc["score"]

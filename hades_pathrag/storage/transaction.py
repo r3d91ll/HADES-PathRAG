@@ -8,7 +8,8 @@ from typing import Dict, List, Optional, Any, Union, Callable, TypeVar, cast
 import logging
 from contextlib import contextmanager
 
-from arango import ArangoClient
+# Import ArangoDB client with type ignore for missing attribute
+from arango import ArangoClient  # type: ignore[attr-defined]
 from arango.database import Database
 from arango.collection import Collection
 from arango.graph import Graph as ArangoGraph
@@ -16,6 +17,11 @@ from arango.exceptions import (
     TransactionInitError,
     TransactionCommitError,
     TransactionAbortError,
+)
+
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    NodeIDType, NodeData, EdgeData
 )
 
 from .interfaces import StorageTransaction

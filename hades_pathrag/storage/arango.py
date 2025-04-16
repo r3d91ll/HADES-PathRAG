@@ -4,13 +4,14 @@ ArangoDB storage implementation for PathRAG.
 This module provides implementations of the storage interfaces
 using ArangoDB as the backend database.
 """
-from typing import Dict, List, Optional, Tuple, Any, Set, Type, cast
+from typing import Dict, List, Optional, Tuple, Any, Set, Type, cast, Union
 import logging
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
-from arango import ArangoClient
+# Import ArangoDB client with type ignore for missing attribute
+from arango import ArangoClient  # type: ignore[attr-defined]
 from arango.database import Database
 from arango.collection import Collection
 from arango.graph import Graph as ArangoGraph
@@ -22,7 +23,12 @@ from arango.exceptions import (
     AQLQueryExecuteError,
 )
 
-from .base import BaseStorage, BaseVectorStorage, BaseDocumentStorage, BaseGraphStorage, NodeID, Embedding
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    EmbeddingArray, NodeIDType, NodeData, EdgeData, PathType
+)
+
+from .base import BaseStorage, BaseVectorStorage, BaseDocumentStorage, BaseGraphStorage
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +187,7 @@ class ArangoVectorStorage(BaseVectorStorage):
                 }
             )
     
-    def store_embedding(self, node_id: NodeID, embedding: Embedding, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def store_embedding(self, node_id: NodeIDType, embedding: EmbeddingArray, metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Store a node embedding with optional metadata.
         
@@ -217,7 +223,7 @@ class ArangoVectorStorage(BaseVectorStorage):
                 logger.error(f"Error updating embedding for {node_id}: {e2}")
                 raise
     
-    def get_embedding(self, node_id: NodeID) -> Optional[Embedding]:
+    def get_embedding(self, node_id: NodeIDType) -> Optional[EmbeddingArray]:
         """
         Get embedding by node ID.
         
@@ -240,10 +246,10 @@ class ArangoVectorStorage(BaseVectorStorage):
     
     def retrieve_similar(
         self, 
-        query_embedding: Embedding, 
+        query_embedding: EmbeddingArray, 
         k: int = 10,
         filter_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[Tuple[NodeID, float, Dict[str, Any]]]:
+    ) -> List[Tuple[NodeIDType, float, Dict[str, Any]]]:
         """
         Find nodes with embeddings similar to the query embedding.
         
@@ -309,7 +315,7 @@ class ArangoVectorStorage(BaseVectorStorage):
             cursor = db.aql.execute(aql, bind_vars=bind_vars)
             
             # Process results
-            results: List[Tuple[NodeID, float, Dict[str, Any]]] = []
+            results: List[Tuple[NodeIDType, float, Dict[str, Any]]] = []
             for doc in cursor:
                 node_id = doc["id"]
                 similarity = doc["similarity"]
@@ -326,7 +332,7 @@ class ArangoVectorStorage(BaseVectorStorage):
             logger.error(f"Error executing vector similarity query: {e}")
             return []
     
-    def delete_embedding(self, node_id: NodeID) -> bool:
+    def delete_embedding(self, node_id: NodeIDType) -> bool:
         """
         Delete a node embedding.
         
@@ -345,7 +351,7 @@ class ArangoVectorStorage(BaseVectorStorage):
         except DocumentGetError:
             return False
     
-    def update_metadata(self, node_id: NodeID, metadata: Dict[str, Any]) -> bool:
+    def update_metadata(self, node_id: NodeIDType, metadata: Dict[str, Any]) -> bool:
         """
         Update metadata for a node embedding.
         
@@ -601,7 +607,7 @@ class ArangoGraphStorage(BaseGraphStorage):
         else:
             self.graph = db.graph(self.graph_name)
     
-    def store_node(self, node_id: NodeID, attributes: Dict[str, Any]) -> None:
+    def store_node(self, node_id: NodeIDType, attributes: NodeData) -> None:
         """
         Store a node with attributes.
         
@@ -630,11 +636,11 @@ class ArangoGraphStorage(BaseGraphStorage):
     
     def store_edge(
         self,
-        source_id: NodeID,
-        target_id: NodeID,
+        source_id: NodeIDType,
+        target_id: NodeIDType,
         relation_type: str,
         weight: float = 1.0,
-        attributes: Optional[Dict[str, Any]] = None
+        attributes: Optional[EdgeData] = None
     ) -> None:
         """
         Store an edge between nodes.
@@ -677,7 +683,7 @@ class ArangoGraphStorage(BaseGraphStorage):
                 logger.error(f"Error updating edge {edge_key}: {e2}")
                 raise
     
-    def get_node(self, node_id: NodeID) -> Optional[Dict[str, Any]]:
+    def get_node(self, node_id: NodeIDType) -> Optional[NodeData]:
         """
         Get node by ID.
         
@@ -698,10 +704,10 @@ class ArangoGraphStorage(BaseGraphStorage):
     
     def get_neighbors(
         self, 
-        node_id: NodeID, 
+        node_id: NodeIDType, 
         direction: str = "outbound", 
         relation_types: Optional[List[str]] = None
-    ) -> List[Tuple[NodeID, str, float]]:
+    ) -> List[Tuple[NodeIDType, str, float]]:
         """
         Get neighbors of a node.
         
@@ -764,7 +770,7 @@ class ArangoGraphStorage(BaseGraphStorage):
     
     def query_subgraph(
         self,
-        start_nodes: List[NodeID],
+        start_nodes: List[NodeIDType],
         max_depth: int = 2,
         relation_types: Optional[List[str]] = None
     ) -> Dict[str, Any]:

@@ -8,10 +8,15 @@ from typing import Dict, List, Optional, Set, Tuple, Any, Type, cast, Union
 from collections import defaultdict, deque
 import logging
 
-import networkx as nx
+import networkx as nx  # type: ignore[attr-defined]
 import numpy as np
 
-from .base import BaseGraph, Path, NodeID, EdgeID
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    NodeIDType, NodeData, EdgeData, PathType, Graph, DiGraph
+)
+
+from .base import BaseGraph, Path, EdgeID
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +35,7 @@ class NetworkXGraph(BaseGraph):
         self.graph: Union[nx.DiGraph, nx.Graph] = nx.DiGraph() if directed else nx.Graph()
         logger.info(f"Initialized NetworkX graph (directed={directed})")
     
-    def add_node(self, node_id: NodeID, attributes: Dict[str, Any]) -> None:
+    def add_node(self, node_id: NodeIDType, attributes: NodeData) -> None:
         """
         Add a node to the graph.
         
@@ -42,11 +47,11 @@ class NetworkXGraph(BaseGraph):
     
     def add_edge(
         self, 
-        source_id: NodeID, 
-        target_id: NodeID, 
+        source_id: NodeIDType, 
+        target_id: NodeIDType, 
         relation_type: str,
         weight: float = 1.0,
-        attributes: Optional[Dict[str, Any]] = None
+        attributes: Optional[EdgeData] = None
     ) -> None:
         """
         Add an edge between two nodes.
@@ -64,7 +69,7 @@ class NetworkXGraph(BaseGraph):
         
         self.graph.add_edge(source_id, target_id, **edge_attrs)
     
-    def get_node(self, node_id: NodeID) -> Optional[Dict[str, Any]]:
+    def get_node(self, node_id: NodeIDType) -> Optional[NodeData]:
         """
         Get node by ID.
         
@@ -78,7 +83,7 @@ class NetworkXGraph(BaseGraph):
             return dict(self.graph.nodes[node_id])
         return None
     
-    def get_neighbors(self, node_id: NodeID) -> List[NodeID]:
+    def get_neighbors(self, node_id: NodeIDType) -> List[NodeIDType]:
         """
         Get neighbors of a node.
         
@@ -100,8 +105,8 @@ class NetworkXGraph(BaseGraph):
     
     def get_paths(
         self,
-        start_node: NodeID,
-        end_node: NodeID,
+        start_node: NodeIDType,
+        end_node: NodeIDType,
         max_length: int = 4,
         decay_rate: float = 0.8,
         pruning_threshold: float = 0.01
@@ -124,9 +129,9 @@ class NetworkXGraph(BaseGraph):
             return []
         
         # Initialize resource distribution
-        resources: Dict[NodeID, float] = defaultdict(float)
+        resources: Dict[NodeIDType, float] = defaultdict(float)
         resources[start_node] = 1.0
-        visited: Set[NodeID] = {start_node}
+        visited: Set[NodeIDType] = {start_node}
         
         # Queue for BFS traversal: (node_id, path_so_far, edges_so_far, edge_weights)
         queue: deque = deque([(start_node, [start_node], [], {})])
@@ -194,7 +199,7 @@ class NetworkXGraph(BaseGraph):
     
     def extract_paths(
         self,
-        retrieved_nodes: Set[NodeID],
+        retrieved_nodes: Set[NodeIDType],
         max_length: int = 4,
         decay_rate: float = 0.8,
         pruning_threshold: float = 0.01

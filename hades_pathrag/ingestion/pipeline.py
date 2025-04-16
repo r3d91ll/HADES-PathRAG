@@ -11,6 +11,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union, cast, ClassVar, Dict
 from hades_pathrag.ingestion.models import IngestDataset, IngestDocument, DocumentRelation
 from hades_pathrag.ingestion.loaders import DataLoader, TextDirectoryLoader, JSONLoader, CSVLoader
 from hades_pathrag.ingestion.embeddings import ISNEEmbeddingProcessor
+from hades_pathrag.embeddings.base import BaseEmbedder
+from hades_pathrag.ingestion.config import load_pipeline_config
+import yaml  # type: ignore
 from hades_pathrag.ingestion.storage import ArangoStorage
 from hades_pathrag.storage.arango import ArangoDBConnection
 
@@ -26,14 +29,14 @@ class IngestionPipeline:
     """
     # Class attributes with type annotations
     db_connection: Optional[ArangoDBConnection]
-    embedding_processor: ISNEEmbeddingProcessor
+    embedding_processor: Union[ISNEEmbeddingProcessor, BaseEmbedder]
     storage: Optional[ArangoStorage]
     loaders: Dict[str, DataLoader]
     
     def __init__(
         self,
         db_connection: Optional[ArangoDBConnection] = None,
-        embedding_processor: Optional[ISNEEmbeddingProcessor] = None,
+        embedding_processor: Optional[Union[ISNEEmbeddingProcessor, BaseEmbedder]] = None,
         document_collection: str = "documents",
         edge_collection: str = "relationships",
         vector_collection: str = "vectors",
@@ -51,7 +54,7 @@ class IngestionPipeline:
             graph_name: Name of the graph
         """
         self.db_connection = db_connection
-        self.embedding_processor = embedding_processor or ISNEEmbeddingProcessor()
+        self.embedding_processor = embedding_processor or ISNEEmbeddingProcessor()  # type: ignore
         
         # Initialize storage as None by default
         self.storage = None
@@ -142,7 +145,11 @@ class IngestionPipeline:
             return dataset
         
         logger.info(f"Computing embeddings for dataset {dataset.name}")
-        return self.embedding_processor.process(dataset)
+        # mypy union-attr fix: only ISNEEmbeddingProcessor has process()
+        if isinstance(self.embedding_processor, ISNEEmbeddingProcessor):
+            return self.embedding_processor.process(dataset)
+        # For other embedders, implement a generic fallback or raise
+        raise NotImplementedError("Embedding processor does not support batch process(). Implement per-document encoding if needed.")
     
     def store_data(self, dataset: IngestDataset) -> Dict[str, Any]:
         """
@@ -197,39 +204,72 @@ class IngestionPipeline:
         return dataset, stats
         
 
-def create_pipeline_from_config(config: Any) -> IngestionPipeline:
+def create_pipeline_from_yaml_config(config_path: str) -> IngestionPipeline:
     """
-    Create an ingestion pipeline from a configuration.
-    
+    Create an ingestion pipeline from a YAML configuration file.
     Args:
-        config: Configuration object with database settings
-        
+        config_path: Path to the YAML config file.
     Returns:
         An IngestionPipeline instance
     """
-    # Create database connection
+    config = load_pipeline_config(config_path)
+
+    # --- Loader selection ---
+    loader_type = config.get('dataloader', {}).get('type', 'text_directory')
+    loader_kwargs = config.get('dataloader', {})
+    loader: DataLoader
+    if loader_type == 'text_directory':
+        loader = TextDirectoryLoader(
+            file_extensions=loader_kwargs.get('file_extensions'),
+            chunk_size=loader_kwargs.get('chunk_size'),
+            chunk_overlap=loader_kwargs.get('chunk_overlap', 0)
+        )
+    elif loader_type == 'json':
+        loader = JSONLoader()
+    elif loader_type == 'csv':
+        loader = CSVLoader()
+    else:
+        raise ValueError(f"Unsupported loader type: {loader_type}")
+
+    # --- Embedding processor selection ---
+    embedding_cfg = config.get('embedding', {})
+    provider = embedding_cfg.get('provider', 'local')
+    embedding_processor: Union[ISNEEmbeddingProcessor, BaseEmbedder]
+    if provider == 'local':
+        embedding_processor = ISNEEmbeddingProcessor()
+    elif provider == 'vllm':
+        # Placeholder for vLLM integration
+        from hades_pathrag.embeddings.factory import create_embedder
+        embedding_processor = create_embedder(
+            provider='vllm',
+            model_name=embedding_cfg.get('model_name'),
+            endpoint=embedding_cfg.get('endpoint')
+        )
+    else:
+        raise ValueError(f"Unsupported embedding provider: {provider}")
+
+    # --- Storage selection ---
+    storage_cfg = config.get('storage', {})
+    db_url = storage_cfg.get('url', 'http://localhost:8529')
+    db_host = db_url.replace('http://', '').replace('https://', '').split(':')[0]
+    db_port = int(db_url.split(':')[-1]) if ':' in db_url else 8529
     db_connection = ArangoDBConnection(
-        host=config.database.url.replace('http://', '').replace('https://', '').split(':')[0],
-        port=int(config.database.url.split(':')[-1]) if ':' in config.database.url else 8529,
-        username=config.database.username,
-        password=config.database.password,
-        database=config.database.database_name
+        host=db_host,
+        port=db_port,
+        username=storage_cfg.get('username', 'root'),
+        password=storage_cfg.get('password', 'password'),
+        database=storage_cfg.get('database', 'pathrag')
     )
-    
-    # Create embedding processor
-    embedding_processor = ISNEEmbeddingProcessor(
-        embedding_dim=128,
-        weight_threshold=0.5,
-    )
-    
-    # Create pipeline
+
+    # --- Pipeline construction ---
     pipeline = IngestionPipeline(
         db_connection=db_connection,
         embedding_processor=embedding_processor,
-        document_collection=config.pathrag.document_collection,
-        edge_collection=config.pathrag.edge_collection,
-        vector_collection=config.pathrag.vector_collection,
-        graph_name=config.pathrag.graph_name,
+        document_collection=storage_cfg.get('document_collection', 'documents'),
+        edge_collection=storage_cfg.get('edge_collection', 'relationships'),
+        vector_collection=storage_cfg.get('vector_collection', 'vectors'),
+        graph_name=storage_cfg.get('graph_name', 'knowledge_graph'),
     )
-    
+    pipeline.register_loader(loader_type, loader)
     return pipeline
+

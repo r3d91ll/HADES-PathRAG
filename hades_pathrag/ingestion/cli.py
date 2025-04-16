@@ -10,8 +10,7 @@ import sys
 from pathlib import Path
 import json
 
-from hades_pathrag.mcp_server.config.settings import load_config
-from hades_pathrag.ingestion.pipeline import create_pipeline_from_config
+from hades_pathrag.ingestion.pipeline import create_pipeline_from_yaml_config
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -106,32 +105,16 @@ def main() -> int:
     logger = logging.getLogger(__name__)
     
     try:
-        # Load configuration
-        config = load_config(args.config)
-        
-        # Create pipeline
-        pipeline = create_pipeline_from_config(config)
-        
-        # Configure the loader if needed
-        loader_kwargs = {
-            "dataset_name": args.dataset_name
-        }
-        
-        if args.loader == "text_directory" and args.file_extensions:
-            loader_kwargs["file_extensions"] = args.file_extensions
-            
-        if args.chunk_size:
-            loader_kwargs["chunk_size"] = args.chunk_size
-            loader_kwargs["chunk_overlap"] = args.chunk_overlap
-        
-        # Run the pipeline
+        # Create pipeline from YAML config
+        pipeline = create_pipeline_from_yaml_config(args.config)
+
+        # Run the pipeline (all loader and embedding settings come from config)
         logger.info(f"Starting ingestion from {args.source}")
         dataset, stats = pipeline.ingest(
             args.source,
-            loader_type=args.loader,
+            loader_type=None,  # Loader type and kwargs are now set by config
             skip_embeddings=args.skip_embeddings,
             skip_storage=args.skip_storage,
-            **loader_kwargs
         )
         
         # Print results

@@ -1,5 +1,5 @@
 """
-Custom type stubs and type handling utilities.
+Central typing module for HADES-PathRAG.
 
 This module provides common type aliases and protocols used throughout the project.
 It simplifies type annotations for complex structures and third-party libraries
@@ -25,28 +25,12 @@ EmbeddingArray = NDArray[np.float32]  # Standard embedding array type
 FloatArray = NDArray[np.float32]      # General floating point array
 IntArray = NDArray[np.int64]          # Integer array type
 
-# NetworkX type aliases
+# NetworkX type aliases with type ignore comments
 # We use Any for node/edge data generics to simplify typing
-Graph = nx.Graph
-DiGraph = nx.DiGraph
-
-# Handle NetworkX multi-graph types
-# Using a try/except block to avoid name redefinition errors
-from typing import Type, cast
-
-try:
-    # Attempt to import MultiGraph directly from networkx
-    from networkx import MultiGraph  # type: ignore[attr-defined]
-except (ImportError, AttributeError):
-    # Use Graph as a fallback
-    MultiGraph = cast(Type, nx.Graph)  # type: ignore[attr-defined]
-
-try:
-    # Attempt to import MultiDiGraph directly from networkx
-    from networkx import MultiDiGraph  # type: ignore[attr-defined]
-except (ImportError, AttributeError):
-    # Use DiGraph as a fallback
-    MultiDiGraph = cast(Type, nx.DiGraph)  # type: ignore[attr-defined]
+Graph = nx.Graph  # type: ignore[type-arg]
+DiGraph = nx.DiGraph  # type: ignore[type-arg] 
+MultiGraph = nx.MultiGraph  # type: ignore[type-arg]
+MultiDiGraph = nx.MultiDiGraph  # type: ignore[type-arg]
 
 # Common structure type aliases
 NodeData = Dict[str, Any]  # Data stored on nodes

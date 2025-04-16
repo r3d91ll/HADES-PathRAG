@@ -1,0 +1,21 @@
+# Example pipeline configuration for HADES-PathRAG
+dataloader:
+  type: "text_directory"  # Options: text_directory, json, csv
+  file_extensions: [".py", ".md"]
+  chunk_size: 500
+  chunk_overlap: 50
+
+embedding:
+  provider: "local"  # Options: local, vllm
+  model_name: "BAAI/bge-large-en"
+  endpoint: "http://localhost:8000"  # Only if provider is vllm
+
+storage:
+  type: "arango"
+  url: "http://localhost:8529"
+  username: "root"
+  password: "password"
+  database: "pathrag"
+
+chunking:
+  max_function_size: 500

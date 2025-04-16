@@ -4,10 +4,15 @@ Base interfaces for embeddings in the PathRAG framework.
 This module defines the abstract base classes for all embedding models.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, TypeVar, Generic, Union, ClassVar, Type, cast, Tuple
+from typing import List, Optional, TypeVar, Tuple, Union, Type
 
 import numpy as np
 import networkx as nx
+
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    EmbeddingArray, NodeIDType, NodeData, Graph, GraphLike
+)
 
 # Type variable for embedding models
 T = TypeVar('T', bound='BaseEmbedder')
@@ -17,7 +22,7 @@ class BaseEmbedder(ABC):
     """Base class for all embedding models."""
     
     @abstractmethod
-    def fit(self, graph: nx.Graph) -> None:
+    def fit(self, graph: Graph) -> None:
         """
         Fit the embedder model to the given graph.
         
@@ -27,7 +32,7 @@ class BaseEmbedder(ABC):
         pass
     
     @abstractmethod
-    def encode(self, node_id: str, neighbors: List[str]) -> np.ndarray:
+    def encode(self, node_id: NodeIDType, neighbors: List[NodeIDType]) -> EmbeddingArray:
         """
         Generate an embedding for the specified node.
         
@@ -41,7 +46,7 @@ class BaseEmbedder(ABC):
         pass
     
     @abstractmethod
-    def encode_text(self, text: str) -> np.ndarray:
+    def encode_text(self, text: str) -> EmbeddingArray:
         """
         Generate an embedding for the given text.
         
@@ -54,7 +59,7 @@ class BaseEmbedder(ABC):
         pass
     
     @abstractmethod
-    def batch_encode(self, nodes: Union[List[Tuple[str, List[str], Optional[str]]], Tuple[List[str], List[List[str]]]]) -> Union[np.ndarray, List[np.ndarray]]:
+    def batch_encode(self, nodes: Union[List[Tuple[NodeIDType, List[NodeIDType], Optional[str]]], Tuple[List[NodeIDType], List[List[NodeIDType]]]]) -> Union[EmbeddingArray, List[EmbeddingArray]]:
         """
         Generate embeddings for multiple nodes at once.
         

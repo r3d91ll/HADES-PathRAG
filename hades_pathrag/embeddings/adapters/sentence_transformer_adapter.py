@@ -4,7 +4,7 @@ Adapter for SentenceTransformer embedding models.
 This adapter wraps the SentenceTransformer implementation and makes it compatible
 with the HADES-PathRAG BaseEmbedder interface.
 """
-from typing import Dict, List, Optional, Any, Union, Tuple, cast
+from typing import Dict, List, Optional, Any, Union, Tuple, cast, Type
 import logging
 import os
 import pickle
@@ -12,10 +12,14 @@ from pathlib import Path
 import json
 
 import numpy as np
+import networkx as nx
 
 # Import BaseEmbedder and other interfaces
 from hades_pathrag.embeddings.base import BaseEmbedder
 from hades_pathrag.embeddings.interfaces import EmbeddingStats
+from hades_pathrag.typings import (
+    EmbeddingArray, NodeIDType, Graph, EmbeddingDict, PathType
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +31,21 @@ except ImportError:
     logger.debug("sentence_transformers package not available")
     SENTENCE_TRANSFORMER_AVAILABLE = False
     # Create dummy class for type checking
-    class SentenceTransformer:
-        pass
+    class _SentenceTransformerDummy:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+        
+        def to(self, device: str) -> '_SentenceTransformerDummy':
+            return self
+            
+        def get_sentence_embedding_dimension(self) -> int:
+            return 0
+            
+        def encode(self, sentences: List[str], **kwargs: Any) -> np.ndarray:
+            return np.array([])
+    
+    # For type checking purposes
+    SentenceTransformer = _SentenceTransformerDummy  # type: ignore
 
 
 class SentenceTransformerAdapter(BaseEmbedder):
@@ -63,28 +80,29 @@ class SentenceTransformerAdapter(BaseEmbedder):
         self.model_name = model_name
         
         # Initialize model with optional cache folder
-        model_kwargs = {}
+        # Pass cache_folder as a keyword argument, not as a second positional argument
         if cache_folder:
-            model_kwargs["cache_folder"] = cache_folder
+            self._model = SentenceTransformer(model_name, cache_folder=cache_folder)
+        else:
+            self._model = SentenceTransformer(model_name)
         
+        # Handle device separately if provided
         if device:
-            model_kwargs["device"] = device
-            
-        self._model = SentenceTransformer(model_name, **model_kwargs)
+            self._model = self._model.to(device)
         
         # Get embedding dimension from model
         self.embedding_dim = embedding_dim or self._model.get_sentence_embedding_dimension()
         
         # Node ID to text mapping
-        self._node_texts: Dict[str, str] = {}
-        self._embeddings: Dict[str, np.ndarray] = {}
+        self._node_texts: Dict[NodeIDType, str] = {}
+        self._embeddings: EmbeddingDict = {}
     
     @property
     def name(self) -> str:
         """Get the name of the embedder."""
         return f"sentence-transformer-{self.model_name}"
     
-    def add_texts(self, texts_dict: Dict[str, str]) -> None:
+    def add_texts(self, texts_dict: Dict[NodeIDType, str]) -> None:
         """
         Add texts to the model.
         
@@ -105,12 +123,13 @@ class SentenceTransformerAdapter(BaseEmbedder):
                 batch_texts = texts[i:i+batch_size]
                 batch_nodes = nodes[i:i+batch_size]
                 
-                embeddings = self._model.encode(batch_texts)
+                tensor_embeddings = self._model.encode(batch_texts)
+                embeddings = tensor_embeddings.numpy() if hasattr(tensor_embeddings, 'numpy') else tensor_embeddings.detach().cpu().numpy()
                 
                 for node, embedding in zip(batch_nodes, embeddings):
                     self._embeddings[node] = embedding
     
-    def encode(self, node_id: str, neighbors: List[str]) -> np.ndarray:
+    def encode(self, node_id: NodeIDType, neighbors: List[NodeIDType]) -> EmbeddingArray:
         """
         Encode a node with its neighbors.
         
@@ -123,30 +142,41 @@ class SentenceTransformerAdapter(BaseEmbedder):
         """
         # Check if node already has an embedding
         if node_id in self._embeddings:
-            return self._embeddings[node_id]
+            # Ensure correct type with explicit cast
+            return cast(EmbeddingArray, np.asarray(self._embeddings[node_id], dtype=np.float32))
         
         # If node has text, encode it
         if node_id in self._node_texts:
             text = self._node_texts[node_id]
-            embedding = self._model.encode(text)
-            self._embeddings[node_id] = embedding
-            return embedding
+            tensor_embedding = self._model.encode(text)
+            embedding = tensor_embedding.numpy() if hasattr(tensor_embedding, 'numpy') else tensor_embedding.detach().cpu().numpy()
+            # Ensure correct type with explicit conversion
+            embedding_array = np.asarray(embedding, dtype=np.float32)
+            self._embeddings[node_id] = embedding_array
+            # Return explicitly typed array instead of using cast
+            return embedding_array
         
         # If node doesn't have text but neighbors do, average neighbor embeddings
-        neighbor_embeddings = []
+        neighbor_embeddings: List[EmbeddingArray] = []
         for neighbor in neighbors:
             if neighbor in self._embeddings:
-                neighbor_embeddings.append(self._embeddings[neighbor])
+                # Ensure each embedding is of the correct type
+                emb = np.asarray(self._embeddings[neighbor], dtype=np.float32)
+                neighbor_embeddings.append(emb)
         
         if neighbor_embeddings:
-            avg_embedding = np.mean(neighbor_embeddings, axis=0)
-            self._embeddings[node_id] = avg_embedding
-            return avg_embedding
+            # Create explicitly typed array and store it
+            avg_embedding_array = np.asarray(np.mean(neighbor_embeddings, axis=0), dtype=np.float32)
+            self._embeddings[node_id] = avg_embedding_array
+            return avg_embedding_array
         
-        # Fallback to zeros
-        return np.zeros(self.embedding_dim)
-    
-    def get_embedding(self, node_id: str) -> Optional[np.ndarray]:
+        # Fallback to zeros - ensure embedding_dim is not None
+        dim = self.embedding_dim if self.embedding_dim is not None else 768
+        # Create a float32 array directly
+        fallback_embedding = np.zeros(dim, dtype=np.float32)
+        return fallback_embedding
+
+    def get_embedding(self, node_id: NodeIDType) -> Optional[EmbeddingArray]:
         """
         Get the embedding for a node.
         
@@ -156,9 +186,13 @@ class SentenceTransformerAdapter(BaseEmbedder):
         Returns:
             Embedding vector if available, None otherwise
         """
-        return self._embeddings.get(node_id)
-    
-    def encode_text(self, text: str) -> np.ndarray:
+        embedding = self._embeddings.get(node_id)
+        if embedding is None:
+            return None
+        # Ensure correct type with explicit cast
+        return cast(EmbeddingArray, np.asarray(embedding, dtype=np.float32))
+
+    def encode_text(self, text: str) -> EmbeddingArray:
         """
         Encode a text string directly.
         
@@ -168,9 +202,65 @@ class SentenceTransformerAdapter(BaseEmbedder):
         Returns:
             Embedding vector
         """
-        return self._model.encode(text)
-    
-    def get_similarities(self, query_embedding: np.ndarray, top_k: int = 10) -> List[Tuple[str, float]]:
+        tensor_embedding = self._model.encode(text)
+        return tensor_embedding.numpy() if hasattr(tensor_embedding, 'numpy') else tensor_embedding.detach().cpu().numpy()
+
+    def batch_encode(self, nodes: Union[List[Tuple[NodeIDType, List[NodeIDType], Optional[str]]], Tuple[List[NodeIDType], List[List[NodeIDType]]]]) -> EmbeddingArray:
+        """
+        Encode multiple nodes in a batch.
+        
+        Args:
+            nodes: Either a list of (node_id, neighbors, text) tuples or a tuple of (node_ids, neighbor_lists)
+            
+        Returns:
+            Matrix of node embeddings
+        """
+        if isinstance(nodes, tuple):
+            node_ids, neighbor_lists = nodes
+            texts = [self._node_texts.get(nid, "") for nid in node_ids]
+        else:
+            node_ids = [n[0] for n in nodes]
+            neighbor_lists = [n[1] for n in nodes]
+            texts = [n[2] for n in nodes if len(n) > 2]
+        
+        # Encode all texts at once
+        if texts and any(t for t in texts):
+            tensor_embeddings = self._model.encode(texts)
+            # Ensure correct type with explicit cast
+            embeddings = np.asarray(
+                tensor_embeddings.numpy() if hasattr(tensor_embeddings, 'numpy') else tensor_embeddings.detach().cpu().numpy(),
+                dtype=np.float32
+            )
+            
+            # Store embeddings for nodes with text
+            for nid, emb in zip(node_ids, embeddings):
+                if nid in self._node_texts:
+                    self._embeddings[nid] = emb
+        else:
+            # Ensure embedding_dim is not None
+            dim = self.embedding_dim if self.embedding_dim is not None else 768
+            embeddings = np.zeros((len(node_ids), dim), dtype=np.float32)
+            
+            # Handle nodes without text by averaging neighbor embeddings
+            for i, (nid, neighbors) in enumerate(zip(node_ids, neighbor_lists)):
+                if nid not in self._node_texts:
+                    # Get embeddings for neighbors, ensuring they're not None
+                    neighbor_embs: List[EmbeddingArray] = []
+                    for n in neighbors:
+                        emb = self.get_embedding(n)
+                        if emb is not None:
+                            neighbor_embs.append(emb)
+                    
+                    if neighbor_embs:
+                        # Calculate mean and ensure float32 type
+                        avg_emb = np.mean(neighbor_embs, axis=0).astype(np.float32)
+                        embeddings[i] = avg_emb
+                        self._embeddings[nid] = avg_emb
+        
+        # Ensure the returned value is explicitly of type EmbeddingArray
+        return np.asarray(embeddings, dtype=np.float32)
+
+    def get_similarities(self, query_embedding: EmbeddingArray, top_k: int = 10) -> List[Tuple[NodeIDType, float]]:
         """
         Get most similar nodes to the query embedding.
         
@@ -194,8 +284,8 @@ class SentenceTransformerAdapter(BaseEmbedder):
         similarities.sort(key=lambda x: x[1], reverse=True)
         
         return similarities[:top_k]
-    
-    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+
+    def _cosine_similarity(self, a: EmbeddingArray, b: EmbeddingArray) -> float:
         """Compute cosine similarity between two vectors."""
         norm_a = np.linalg.norm(a)
         norm_b = np.linalg.norm(b)
@@ -203,8 +293,9 @@ class SentenceTransformerAdapter(BaseEmbedder):
         if norm_a == 0 or norm_b == 0:
             return 0.0
         
-        return np.dot(a, b) / (norm_a * norm_b)
-    
+        # Ensure we return a float, not Any
+        return float(np.dot(a, b) / (norm_a * norm_b))
+
     def get_stats(self) -> EmbeddingStats:
         """
         Get statistics about the embeddings.
@@ -212,13 +303,39 @@ class SentenceTransformerAdapter(BaseEmbedder):
         Returns:
             Embedding statistics
         """
-        return {
-            "num_embeddings": len(self._embeddings),
-            "embedding_dim": self.embedding_dim,
-            "model_type": f"sentence-transformer-{self.model_name}",
-            "average_norm": np.mean([np.linalg.norm(emb) for emb in self._embeddings.values()]) if self._embeddings else 0.0
-        }
-    
+        # Create EmbeddingStats object with correct typing
+        return EmbeddingStats(
+            model_name=f"sentence-transformer-{self.model_name}",
+            embedding_dim=self.embedding_dim if self.embedding_dim is not None else 768,
+            node_count=len(self._embeddings),
+            training_parameters={
+                "model": self.model_name,
+                "average_norm": float(np.mean([np.linalg.norm(emb) for emb in self._embeddings.values()]) if self._embeddings else 0.0)
+            }
+        )
+
+    def fit(self, graph: Graph) -> None:
+        """
+        Fit the model to the graph by encoding all nodes with text content.
+        
+        Args:
+            graph: NetworkX graph to fit on
+        """
+        # Get node count safely without calling list()
+        node_count = sum(1 for _ in graph.nodes())
+        logger.info(f"Fitting {self.name} to graph with {node_count} nodes")
+        
+        # Extract text content from nodes and create a mapping
+        texts_dict = {}
+        for node in graph.nodes():
+            # Get node data safely
+            node_data = dict(graph.nodes[node]) if node in graph.nodes else {}
+            if 'text' in node_data and isinstance(node_data['text'], str):
+                texts_dict[node] = node_data['text']
+        
+        logger.info(f"Found {len(texts_dict)} nodes with text content")
+        self.add_texts(texts_dict)
+
     def save(self, path: str) -> None:
         """
         Save the model to a file.
@@ -246,7 +363,7 @@ class SentenceTransformerAdapter(BaseEmbedder):
                 "embeddings": self._embeddings,
                 "node_texts": self._node_texts
             }, f)
-    
+
     @classmethod
     def load(cls, path: str) -> "SentenceTransformerAdapter":
         """

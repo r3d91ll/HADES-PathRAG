@@ -6,9 +6,13 @@ for the PathRAG system.
 """
 from typing import List, Type, TypeVar, Dict, Any, Optional, Set, Tuple
 
+# Import common types from our centralized typing module
+from hades_pathrag.typings import (
+    NodeIDType, NodeData, EdgeData, PathType, Graph, DiGraph
+)
+
 # Type variables for graph classes
 T = TypeVar('T', bound='BaseGraph')
-NodeID = str
 EdgeID = str
 Weight = float
 
