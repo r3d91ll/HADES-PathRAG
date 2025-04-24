@@ -1,0 +1,31 @@
+# Centralized pre-processor configuration for HADES-PathRAG
+# Edit this YAML file to change pre-processor behavior.
+
+version: 1
+exclude_patterns:
+  - __pycache__
+  - .git
+recursive: true
+max_workers: 4
+file_type_map:
+  python: ['.py']
+  javascript: ['.js', '.jsx', '.ts', '.tsx']
+  java: ['.java']
+  cpp: ['.cpp', '.hpp', '.cc', '.h']
+  markdown: ['.md', '.markdown']
+  pdf: ['.pdf']
+  json: ['.json']
+  csv: ['.csv']
+  text: ['.txt']
+  html: ['.html', '.htm']
+  xml: ['.xml']
+preprocessor_config:
+  python:
+    create_symbol_table: true
+    extract_docstrings: true
+    analyze_imports: true
+  markdown:
+    extract_mermaid: true
+    extract_code_blocks: true
+    extract_links: true
+options: {}

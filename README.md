@@ -1,15 +1,15 @@
 # HADES-PathRAG
 
-Enhanced implementation of **PathRAG: Pruning Graph-based Retrieval Augmented Generation with Relational Paths** with XnX notation, ArangoDB integration, and **native Ollama support** for seamless local LLM inference using your existing Ollama installation.
+Enhanced implementation of **PathRAG: Pruning Graph-based Retrieval Augmented Generation with Relational Paths** with ArangoDB integration and **vLLM support** for high-performance local LLM inference.
 
 ## Features
 
 - 🔍 **PathRAG Implementation**: Efficient graph-based RAG that prunes retrieval paths
-- 🧠 **Native Ollama Integration**: Works directly with locally installed Ollama service for optimized performance
-- 🔗 **XnX Notation**: Enhanced relationship representation in knowledge graphs
+- 🧠 **vLLM Integration**: High-performance inference engine for local model serving
 - 📊 **ArangoDB Support**: Scalable graph database backend for enterprise use
-- 🔄 **HADES Recursive Architecture**: Self-improving AI system framework
-- 🚀 **MCP Server**: Model Context Protocol for IDE integration
+- 🔄 **ISNE Embedding**: Inductive Shallow Node Embedding for semantic understanding
+- 🚀 **FastAPI Interface**: Simple, lightweight API for system interaction
+- 🔧 **Type-Safe Implementation**: Fully type-annotated codebase for reliability
 
 ## Install
 
@@ -21,25 +21,26 @@ cd HADES-PathRAG
 # Install dependencies
 pip install -e .
 
-# Use your existing Ollama installation
-# Verify Ollama is running as a system service:
-systemctl status ollama
+# Set up vLLM for local inference
+pip install vllm
 
-# Or install Ollama if needed (automatically sets up as a system service on Linux):
-# curl -fsSL https://ollama.com/install.sh | sh
+# (Optional) Install ArangoDB if not already installed
+# Follow instructions at https://www.arangodb.com/download/
 ```
+
 ## Quick Start
-* You can quickly experience this project in the `v1_test.py` file.
-* Set OpenAI API key in environment if using OpenAI models: `api_key="sk-...".` in the `v1_test.py` and `llm.py` file
-* Prepare your retrieval document "text.txt".
-* Use the following Python snippet in the "v1_text.py" file to initialize PathRAG and perform queries.
+
+- You can quickly experience this project in the `v1_test.py` file.
+- Set OpenAI API key in environment if using OpenAI models: `api_key="sk-...".` in the `v1_test.py` and `llm.py` file
+- Prepare your retrieval document "text.txt".
+- Use the following Python snippet in the "v1_text.py" file to initialize PathRAG and perform queries.
   
 ```python
 import os
 from pathrag import PathRAG, QueryParam
 
-# For using Ollama (no API keys needed)
-from pathrag.llm import ollama_model_complete
+# For using vLLM (no API keys needed)
+from pathrag.llm import vllm_model_complete
 
 # For using OpenAI (if preferred)
 # from pathrag.llm import openai_complete
@@ -49,13 +50,12 @@ WORKING_DIR = "./your_working_dir"
 if not os.path.exists(WORKING_DIR):
     os.mkdir(WORKING_DIR)
 
-# Initialize with Ollama as the LLM provider
+# Initialize with vLLM as the LLM provider
 rag = PathRAG(
     working_dir=WORKING_DIR,
-    llm_model_func=lambda prompt, **kwargs: ollama_model_complete(
+    llm_model_func=lambda prompt, **kwargs: vllm_model_complete(
         prompt=prompt,
-        hashing_kv={"global_config": {"llm_model_name": "llama3"}},
-        host="http://localhost:11434"
+        model="mistralai/Mistral-7B-Instruct-v0.2"
     )
 )
 
@@ -66,10 +66,13 @@ with open(data_file) as f:
 
 print(rag.query(question, param=QueryParam(mode="hybrid")))
 ```
+
 ## Parameter modification
+
 You can adjust the relevant parameters in the `base.py` and `operate.py` files.
 
 ## Batch Insert
+
 ```python
 import os
 folder_path = "your_folder_path"  
@@ -82,7 +85,9 @@ for file_name in txt_files:
 ```
 
 ## Cite
+
 Please cite our paper if you use this code in your own work:
+
 ```python
 @article{chen2025pathrag,
   title={PathRAG: Pruning Graph-based Retrieval Augmented Generation with Relational Paths},
@@ -92,28 +97,75 @@ Please cite our paper if you use this code in your own work:
 }
 ```
 
-## HADES: XnX-Enhanced PathRAG Implementation
+## HADES: Enhanced PathRAG Implementation
 
-This fork contains an enhanced version of PathRAG that integrates XnX notation, ArangoDB, and Ollama for the HADES project.
+This project contains an advanced implementation of PathRAG that integrates ArangoDB and vLLM for high-performance knowledge graph retrieval. For detailed documentation, see our [Ingestion System](./docs/ingestion_system.md), [Chunking Strategy](./docs/chunking.md), and [API Reference](./docs/api.md).
+
+## Documentation Structure
+
+The `/docs` directory contains comprehensive documentation organized as follows:
+
+### Core Components
+
+- [Ingestion System](./docs/ingestion_system.md) - Complete ingestion pipeline and incremental update process
+- [Chunking Strategy](./docs/chunking.md) - Hybrid chunking with semantic and code-aware approaches
+- [API Reference](./docs/api.md) - FastAPI interface for the PathRAG system
+
+### Integration Guides
+
+- [ArangoDB Setup](./docs/integration/arango_setup.md) - Setting up ArangoDB for HADES
+- [Docker Deployment](./docs/integration/docker_deployment.md) - Containerized deployment
+- [GitHub Ingestion](./docs/integration/github_ingestion.md) - Ingesting code from GitHub repositories
+
+### Original Research
+
+- [Academic Papers](./docs/original_paper/) - Research foundation for PathRAG
+
+### Experimental Features
+
+- [XnX Notation](./docs/xnx/) - Documentation for experimental relationship notation
 
 ### What is HADES?
 
-Wondering about our project name? HADES isn't just the Greek god of the underworld - it's a carefully crafted backronym:
+HADES represents our approach to building a powerful, type-safe knowledge retrieval system:
 
-- **H**euristic (XnX notation for weighted path tuning)
-- **A**daptive (PathRAG implementation with relationship pruning)
-- **D**ata (ArangoDB knowledge graph storage)
-- **E**xtrapolation (Ollama model inference)
-- **S**ystems (because we needed an S!)
-
-> *Note to critics: Yes, we crafted the name first and built the technology to match it. That's just how cool we are.*
+- **H**euristic approach to knowledge representation and retrieval
+- **A**daptive graph traversal with relationship-aware path ranking
+- **D**ata-centric with efficient ArangoDB storage and incremental updates
+- **E**xtrapolation capabilities for models using retrieved context
+- **S**ystem designed as a network of interconnected processes
 
 ### Key Enhancements
 
-- **XnX Notation**: Added weight, direction, and distance parameters to fine-tune path retrieval
+- **Incremental Knowledge Graph**: Support for updating individual nodes and relationships
 - **ArangoDB Integration**: Optimized graph storage with combined vector and graph operations
-- **MCP Server**: REST API with entity-relationship model clarity
-- **Ollama Integration**: Local LLM inference for improved privacy and control
-- **Web Interface**: Modern UI for interacting with the system
+- **FastAPI Interface**: Simple REST API for interaction with the system
+- **vLLM Integration**: High-performance inference for improved throughput
+- **ISNE Embedding**: Advanced embedding approach that captures relationship information
 
-Run `python start_server.py` to launch the enhanced PathRAG with MCP and Ollama integration.
+Run `python -m src.api.cli` to launch the API server interface.
+
+## Development Roadmap
+
+### Completed
+
+- ✅ Basic PathRAG implementation with ArangoDB support
+- ✅ Type-safe base interfaces for embeddings, storage, and graph operations
+- ✅ Python pre-processor with symbol table support
+- ✅ Ingestion pipeline documentation and design
+- ✅ FastAPI server implementation
+
+### In Progress
+
+- 🔄 Docling pre-processor improvements
+- 🔄 Hybrid chunking implementation (Chonky + code-aware)
+- 🔄 ISNE embedding integration
+- 🔄 Incremental update support
+
+### Planned
+
+- 📅 Integration tests for full pipeline
+- 📅 Performance optimization (parallelism)
+- 📅 vLLM integration for inference
+- 📅 Web interface development
+- 📅 XnX notation support (experimental)
