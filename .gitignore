@@ -112,3 +112,8 @@ db.sqlite3
 *.env
 .env.*
 !.env.template
+
+.mypy_cache
+
+# Dead code
+.dead-code

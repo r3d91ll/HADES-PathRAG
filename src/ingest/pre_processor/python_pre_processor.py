@@ -98,6 +98,7 @@ class PythonPreProcessor(BasePreProcessor):
             'id': doc_id,
             'type': 'python',
             'content': content,
+            'docstring': module_docstring,  # Add docstring at top level for tests
             'metadata': {
                 'docstring': module_docstring,
                 'file_size': len(content),

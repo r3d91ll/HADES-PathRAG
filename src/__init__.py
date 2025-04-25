@@ -8,5 +8,4 @@ __version__ = "0.1.0"
 
 # Import key modules to make them available at package level
 from . import pathrag
-from . import xnx
-from . import mcp
+# XnX and MCP modules have been moved to dead-code

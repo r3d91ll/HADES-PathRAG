@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import tiktoken
 
-from PathRAG.prompt import PROMPTS
+from .prompt import PROMPTS
 
 
 class UnlimitedSemaphore:
