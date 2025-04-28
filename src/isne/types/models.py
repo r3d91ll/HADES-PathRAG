@@ -167,19 +167,20 @@ class IngestDataset:
 @dataclass
 class EmbeddingConfig:
     """Configuration for embedding models in the ISNE pipeline."""
-    # Model selection and parameters
     model_name: str
     model_dimension: int
     batch_size: int = 16
-    
-    # Processing options
     use_gpu: bool = True
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
-    
-    # Advanced options
-    pooling_strategy: str = "mean"  # mean, max, cls, etc.
+    pooling_strategy: str = "mean"
     max_length: int = 512
+    
+    # vLLM acceleration options
+    use_vllm: bool = False
+    vllm_server_url: Optional[str] = None
+    vllm_tensor_parallel_size: int = 1
+    vllm_gpu_memory_utilization: float = 0.8
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""

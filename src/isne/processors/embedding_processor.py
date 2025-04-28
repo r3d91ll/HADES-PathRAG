@@ -15,6 +15,8 @@ import hashlib
 from datetime import datetime
 import time
 
+from src.isne.adapters.vllm_adapter import VLLMAdapter
+
 from src.isne.types.models import IngestDocument, IngestDataset, DocumentRelation, EmbeddingConfig
 from src.isne.processors.base_processor import BaseProcessor, ProcessorConfig, ProcessorResult
 
@@ -85,7 +87,10 @@ class EmbeddingProcessor(BaseProcessor):
         
         try:
             # Load appropriate embedding model based on name
-            if "sentence-transformers" in model_name or "sbert" in model_name:
+            if self.embedding_config.use_vllm:
+                # Use vLLM for accelerated embeddings
+                self._initialize_vllm(model_name, device)
+            elif "sentence-transformers" in model_name or "sbert" in model_name:
                 self._initialize_sentence_transformers(model_name, device)
             elif "openai" in model_name:
                 self._initialize_openai(model_name)
@@ -238,21 +243,38 @@ class EmbeddingProcessor(BaseProcessor):
     
     def _initialize_tensorflow(self, model_name: str) -> None:
         """
-        Initialize a TensorFlow model for embeddings.
+        Initialize a TensorFlow embedding model.
         
         Args:
             model_name: Name of the TensorFlow model
         """
+        # TODO: Implement TensorFlow model initialization
+        raise NotImplementedError("TensorFlow embedding model integration not implemented yet")
+    
+    def _initialize_vllm(self, model_name: str, device: str) -> None:
+        """
+        Initialize vLLM-accelerated embeddings.
+        
+        Args:
+            model_name: Name of the embedding model
+            device: Device to run the model on ('cuda' or 'cpu')
+        """
         try:
-            import tensorflow as tf
-            import tensorflow_hub as hub
+            # Configure vLLM adapter
+            server_url = self.embedding_config.vllm_server_url or "http://localhost:8000"
             
-            # Extract the actual model name if needed
-            if "tensorflow/" in model_name or "tf/" in model_name:
-                model_name = model_name.split("/", 1)[1]
+            # Create vLLM adapter
+            vllm_adapter = VLLMAdapter(
+                model_name=model_name,
+                server_url=server_url,
+                batch_size=self.embedding_config.batch_size,
+                device=device,
+                normalize_embeddings=self.embedding_config.normalize_embeddings,
+                use_openai_api=True  # Use OpenAI-compatible API
+            )
             
-            # Load model from TF Hub
-            self.model = hub.load(model_name)
+            # Store the adapter
+            self.model = vllm_adapter
             
             # Create embedding function
             def get_tf_embeddings(texts: List[str]) -> List[List[float]]:

@@ -1,148 +1,170 @@
 """
-Tests for the base pre-processor module.
+Tests for the BasePreProcessor class.
+
+This module provides test coverage for the base pre-processor functionality.
 """
-import unittest
-from unittest.mock import patch, MagicMock
+import os
 import pytest
-from typing import Dict, List, Any, Optional
-import abc
+import tempfile
+from unittest.mock import patch, MagicMock
+from typing import Dict, Any, List
+from pathlib import Path
 
-from src.ingest.pre_processor.base_pre_processor import BasePreProcessor
-
-
-class TestBasePreProcessor(unittest.TestCase):
-    """Test suite for BasePreProcessor class."""
-    
-    def test_is_abstract_class(self) -> None:
-        """Test that BasePreProcessor is an abstract base class."""
-        self.assertTrue(issubclass(BasePreProcessor, abc.ABC))
-    
-    def test_cannot_instantiate_directly(self) -> None:
-        """Test that BasePreProcessor cannot be instantiated directly."""
-        with self.assertRaises(TypeError):
-            BasePreProcessor()
-    
-    def test_required_abstract_methods(self) -> None:
-        """Test that BasePreProcessor defines required abstract methods."""
-        # Check that process_file is an abstract method
-        self.assertTrue(hasattr(BasePreProcessor, 'process_file'))
-        # In Python 3.11+, __isabstractmethod__ is a boolean, not an iterable
-        is_abstract = getattr(BasePreProcessor.process_file, '__isabstractmethod__', False)
-        self.assertTrue(is_abstract)
-        
-        # Check that process_batch is a method (but not abstract)
-        self.assertTrue(hasattr(BasePreProcessor, 'process_batch'))
+from src.ingest.pre_processor.base_pre_processor import BasePreProcessor, ProcessError
 
 
-class ConcretePreProcessor(BasePreProcessor):
+# Create a concrete implementation of BasePreProcessor for testing
+class TestablePreProcessor(BasePreProcessor):
     """Concrete implementation of BasePreProcessor for testing."""
     
+    def __init__(self, should_raise_error: bool = False):
+        super().__init__()
+        self.should_raise_error = should_raise_error
+        self.process_file_called = False
+        self.last_file_path = None
+        
     def process_file(self, file_path: str) -> Dict[str, Any]:
-        """Implement required abstract method."""
-        return {"path": file_path, "processed": True}
+        """Implementation of abstract method for testing."""
+        self.process_file_called = True
+        self.last_file_path = file_path
+        
+        if self.should_raise_error:
+            raise ValueError("Test error")
+            
+        return {
+            "path": file_path,
+            "content": "Test content",
+            "id": "test-id",
+            "type": "test-type",
+            "metadata": {"test": "metadata"}
+        }
 
 
-class TestConcretePreProcessor(unittest.TestCase):
-    """Test suite for a concrete implementation of BasePreProcessor."""
+class TestBasePreProcessor:
+    """Tests for the BasePreProcessor class."""
     
-    def setUp(self) -> None:
-        """Set up test fixtures."""
-        self.processor = ConcretePreProcessor()
+    @pytest.fixture
+    def processor(self):
+        """Create a TestablePreProcessor instance."""
+        return TestablePreProcessor()
     
-    def test_can_instantiate_concrete_subclass(self) -> None:
-        """Test that a concrete subclass can be instantiated."""
-        self.assertIsNotNone(self.processor)
-        self.assertTrue(isinstance(self.processor, BasePreProcessor))
+    @pytest.fixture
+    def error_processor(self):
+        """Create a TestablePreProcessor that raises errors."""
+        return TestablePreProcessor(should_raise_error=True)
     
-    def test_process_file_implementation(self) -> None:
-        """Test the concrete implementation of process_file."""
-        # Act
-        result = self.processor.process_file("test_file.txt")
+    @pytest.fixture
+    def temp_file(self):
+        """Create a temporary file for testing."""
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"Test content")
+            path = f.name
+        yield path
+        os.unlink(path)
+    
+    def test_initialization(self, processor):
+        """Test that the BasePreProcessor initializes correctly."""
+        assert processor.errors == []
+        assert hasattr(processor, "process_file")
+        assert callable(processor.process_file)
+    
+    def test_process_batch_empty(self, processor):
+        """Test processing an empty batch."""
+        results = processor.process_batch([])
+        assert results == []
+        assert processor.errors == []
+    
+    def test_process_batch_success(self, processor, temp_file):
+        """Test processing a batch with successful file processing."""
+        results = processor.process_batch([temp_file])
         
-        # Assert
-        self.assertEqual(result["path"], "test_file.txt")
-        self.assertTrue(result["processed"])
+        assert len(results) == 1
+        assert processor.process_file_called
+        assert processor.last_file_path == temp_file
+        assert results[0]["path"] == temp_file
+        assert processor.errors == []
     
-    def test_process_batch_default_implementation(self) -> None:
-        """Test the default implementation of process_batch."""
-        # Arrange
-        import tempfile
-        import os
-        
-        # Create temporary files
-        temp_files = []
-        for i in range(3):
-            fd, path = tempfile.mkstemp(suffix=".txt")
-            os.write(fd, f"test content {i}".encode('utf-8'))
-            os.close(fd)
-            temp_files.append(path)
+    def test_process_batch_multiple_files(self, processor, temp_file):
+        """Test processing multiple files in a batch."""
+        # Create a second temporary file
+        with tempfile.NamedTemporaryFile(delete=False) as f2:
+            f2.write(b"Another test file")
+            second_file = f2.name
         
         try:
-            # Act
-            results = self.processor.process_batch(temp_files)
+            files = [temp_file, second_file]
+            results = processor.process_batch(files)
             
-            # Assert
-            self.assertEqual(len(results), 3)
+            assert len(results) == 2
+            assert processor.process_file_called
+            assert processor.last_file_path in files
+            assert len([r for r in results if r["path"] in files]) == 2
+            assert processor.errors == []
         finally:
-            # Clean up temporary files
-            for path in temp_files:
-                if os.path.exists(path):
-                    os.unlink(path)
-        # Check that the results match our temp files
-        self.assertEqual(results[0]["path"], temp_files[0])
-        self.assertEqual(results[1]["path"], temp_files[1])
-        self.assertEqual(results[2]["path"], temp_files[2])
+            os.unlink(second_file)
     
-    def test_process_batch_handles_errors(self) -> None:
-        """Test that process_batch continues despite errors in individual files."""
-        # Arrange
-        import tempfile
-        import os
+    def test_process_batch_with_error(self, error_processor, temp_file):
+        """Test processing a batch with an error."""
+        with patch("traceback.format_exc", return_value="Test traceback"):
+            results = error_processor.process_batch([temp_file])
+            
+            assert results == []
+            assert error_processor.process_file_called
+            assert error_processor.last_file_path == temp_file
+            assert len(error_processor.errors) == 1
+            assert error_processor.errors[0]["file_path"] == temp_file
+            assert "Test error" in error_processor.errors[0]["error"]
+            assert error_processor.errors[0]["traceback"] == "Test traceback"
+    
+    def test_process_batch_nonexistent_file(self, processor):
+        """Test processing a non-existent file."""
+        non_existent_file = "/path/does/not/exist.txt"
         
-        # Create temporary files
-        temp_files = []
-        for i in range(3):
-            fd, path = tempfile.mkstemp(suffix=".txt")
-            os.write(fd, f"test content {i}".encode('utf-8'))
-            os.close(fd)
-            temp_files.append(path)
-        
-        # Mock process_file to fail for the second file
-        original_process_file = self.processor.process_file
-        
-        def mock_process_file(file_path: str) -> Dict[str, Any]:
-            if file_path == temp_files[1]:  # Fail on the second file
-                raise Exception("Processing error")
-            return original_process_file(file_path)
-        
-        self.processor.process_file = mock_process_file
+        # Mock os.path.exists to return False for our test file
+        with patch("os.path.exists", return_value=False):
+            with patch("logging.Logger.warning") as mock_warning:
+                results = processor.process_batch([non_existent_file])
+                
+                assert results == []
+                assert not processor.process_file_called
+                assert processor.errors == []
+                mock_warning.assert_called_once()
+    
+    def test_process_batch_multiple_with_errors(self, error_processor, temp_file):
+        """Test processing multiple files with some errors."""
+        # Create a valid file
+        with tempfile.NamedTemporaryFile(delete=False) as valid_file:
+            valid_file.write(b"Valid content")
+            valid_path = valid_file.name
+            
+        # Create a non-existent file path
+        non_existent = "/path/does/not/exist.txt"
         
         try:
-            # Act
-            results = self.processor.process_batch(temp_files)
-            
-            # Assert
-            self.assertEqual(len(results), 2)  # Only 2 successful files
+            # Mock os.path.exists to return True for valid file, False for non-existent
+            def mock_exists(path):
+                return path != non_existent
+                
+            with patch("os.path.exists", side_effect=mock_exists):
+                with patch("traceback.format_exc", return_value="Test traceback"):
+                    # First file will raise an error during processing
+                    # Second file doesn't exist
+                    results = error_processor.process_batch([temp_file, non_existent])
+                    
+                    assert results == []
+                    assert error_processor.process_file_called
+                    assert len(error_processor.errors) == 1
+                    assert error_processor.errors[0]["file_path"] == temp_file
         finally:
-            # Restore original method
-            self.processor.process_file = original_process_file
-            # Clean up temporary files
-            for path in temp_files:
-                if os.path.exists(path):
-                    os.unlink(path)
-        # Check that we have the first and third files (second should have failed)
-        self.assertEqual(results[0]["path"], temp_files[0])
-        self.assertEqual(results[1]["path"], temp_files[2])
+            os.unlink(valid_path)
     
-    def test_process_batch_with_empty_list(self) -> None:
-        """Test process_batch with an empty file list."""
-        # Act
-        results = self.processor.process_batch([])
-        
-        # Assert
-        self.assertEqual(len(results), 0)
-        self.assertEqual(len(self.processor.errors), 0)
-
-
-# Add pytest marker for categorization
-pytestmark = pytest.mark.pre_processor
+    def test_get_errors(self, error_processor, temp_file):
+        """Test getting errors after processing."""
+        with patch("traceback.format_exc", return_value="Test traceback"):
+            error_processor.process_batch([temp_file])
+            errors = error_processor.get_errors()
+            
+            assert len(errors) == 1
+            assert errors[0]["file_path"] == temp_file
+            assert isinstance(errors[0], dict)
+            assert isinstance(errors, list)

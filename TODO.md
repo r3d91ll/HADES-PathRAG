@@ -10,16 +10,35 @@
 - [x] Clean up project directory structure (moved obsolete docs to old-docs/)
 - [ ] Fix failing tests and test infrastructure
 
-### vLLM Integration (Replacing Ollama)
+### vLLM Integration
+
+#### Phase 1: Embedding Acceleration (Current Priority)
 
 - [x] Add vLLM to project dependencies in pyproject.toml
 - [ ] Install and configure vLLM locally (requires separate installation via setup_dev_env.sh)
-- [ ] Create vLLM adapter compatible with existing PathRAG interfaces
+- [x] Set up vLLM server for embedding generation
+- [x] Create adapter for vLLM in `src/isne/adapters/vllm_adapter.py`
+- [x] Update embedding processor to support vLLM
+- [ ] Benchmark embedding performance with vLLM
+- [ ] Document vLLM embedding setup in `docs/integration/vllm_embeddings.md`
+
+#### Phase 2: LLM Inference (Future Work)
+
+- [ ] Create vLLM adapter compatible with existing PathRAG inference interfaces
 - [ ] Update API clients to use vLLM's OpenAI-compatible endpoints
 - [ ] Ensure backward compatibility with existing code
-- [ ] Document vLLM setup and configuration in `docs/integration/vllm_setup.md`
+- [ ] Document vLLM inference setup in `docs/integration/vllm_inference.md`
 - [ ] Update example scripts to use vLLM instead of Ollama
 - [ ] Integrate vLLM with the FastAPI interface
+
+### ISNE Pipeline Enhancement
+
+- [x] Complete ISNE integration with ingestion pipeline
+- [x] Implement path ranking according to PathRAG algorithm (70% semantic, 10% path length, 20% edge strength)
+- [x] Optimize embedding generation for code chunks
+- [x] Implement specialized embedding for inter-file relationships
+- [ ] Train or fine-tune graph neural networks for code representation
+- [ ] Scale testing with larger codebases
 
 ### Type Safety Implementation
 
@@ -48,8 +67,10 @@
 - [x] Implement `.symbol_table` directory structure for source code metadata
 - [x] Create comprehensive documentation for ingestion system
 - [ ] Integrate pre-processor with main ingestion pipeline
+  - [ ] Ensure compatibility with Chonky implementation
+  - [ ] Prioritize text content processing with Chonky
 - [ ] Create inter-file relationship detection and storage
-- [ ] Implement the hybrid chunking processor
+- [ ] Implement Chonky-based semantic chunking (see Chonky implementation section)
 - [ ] Build graph construction module to prepare for ISNE embedding
 
 ### Ingestion Pipeline Optimization
@@ -128,29 +149,29 @@
 
 ## 📋 Future Tasks
 
-### ISNE Pipeline Enhancement
-
-- [ ] Complete ISNE integration with ingestion pipeline
-- [ ] Implement path ranking according to PathRAG algorithm (70% semantic, 10% path length, 20% edge strength)
-- [ ] Optimize embedding generation for code chunks
-- [ ] Implement specialized embedding for inter-file relationships
-- [ ] Train or fine-tune graph neural networks for code representation
-- [ ] Scale testing with larger codebases
-
 ### Document Processing Improvements
 
 - [x] Create modular symbol table implementation for Python code documents
 - [ ] Complete Docling pre-processor improvements
-- [ ] Implement Chonky-based neural chunking for text documents
+
+### Chonky Implementation for Semantic Chunking
+
+- [x] Document chunking strategies in chunking.md
+- [x] Implement semantic chunking using Chonky
+  - [x] Create `chonking_processor.py` as implementation of Chonky chunker
+  - [x] Update pipeline to support Chonky for non-code content
+  - [x] Create testing framework to compare chunking approaches
+  - [x] Integrate with vLLM for embedding generation
+
+### Future Chunking Work (After Chonky Implementation)
+
 - [ ] Create modular symbol table implementation for markdown documents
   - [ ] Design document-oriented structure focusing on headers, sections, and references
   - [ ] Support named anchors and cross-document linking
   - [ ] Ensure compatibility with different modalities (text, code, diagrams)
-- [ ] Implement fully-featured HybridChunkingProcessor
-  - [x] Document chunking strategies in chunking.md
-  - [ ] Implement code-aware chunking using symbol tables
-  - [ ] Implement semantic chunking using Chonky
-  - [ ] Create configurable chunking parameters
+- [ ] Implement code-aware chunking using symbol tables (separate from Chonky)
+- [ ] Create configurable chunking parameters
+
 - [ ] Refactor to use centralized configuration system
   - [ ] Unify configuration across all HADES-PathRAG components
   - [ ] Implement hierarchical configuration with inheritance
@@ -166,6 +187,7 @@
 
 ### Model Integration
 
+- [ ] Implement embedding acceleration (see vLLM Integration section)
 - [ ] Implement GNN for graph traversal operations
 - [ ] Set up domain detection for model selection
 - [ ] Configure code-specific model (Qwen2.5-coder)
@@ -184,6 +206,9 @@
 ## 🔍 Project Review Notes
 
 - Decision made to replace Ollama with vLLM for better hardware utilization, API compatibility, and model selection
+- Decision made to implement Chonky for semantic chunking of non-code content to improve retrieval quality
+- Plan to create unified embedding service using vLLM for both Chonky and ISNE
+- Phased approach: 1) Implement Chonky, 2) Integrate with pipeline, 3) Set up vLLM, 4) Testing
 - Decision made to replace MCP server with a simpler FastAPI implementation for easier maintenance and integration
 - Migrated pre-processor code needs integration with the main ingestion pipeline
 - Documentation has been consolidated and improved for better clarity and navigation
@@ -191,4 +216,4 @@
 - Project environment setup is stable but test infrastructure needs improvement
 - XnX notation has been moved to experimental features while core functionality is prioritized
 
-Last updated: April 24, 2025
+Last updated: April 27, 2025

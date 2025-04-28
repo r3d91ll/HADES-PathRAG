@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 # Import HADES-PathRAG components
-from ..ingest.ingestor import RepositoryIngestor
+from ..ingest.orchestrator.ingestor import RepositoryIngestor
 from ..storage.arango_storage import ArangoStorage
 from ..embedding.isne_embedder import ISNEEmbedder
 

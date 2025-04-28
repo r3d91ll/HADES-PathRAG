@@ -26,6 +26,7 @@ from src.isne.processors.base_processor import BaseProcessor, ProcessorResult, P
 from src.isne.processors.embedding_processor import EmbeddingProcessor
 from src.isne.processors.graph_processor import GraphProcessor
 from src.isne.processors.chunking_processor import ChunkingProcessor
+from src.isne.processors.chonking_processor import ChonkyProcessor
 from src.isne.models.isne_model import ISNEModel
 
 # Set up logging
@@ -55,13 +56,15 @@ class PipelineConfig:
         # Processor options
         embedding_config: Optional[EmbeddingConfig] = None,
         chunking_config: Optional[ProcessorConfig] = None,
+        chonky_config: Optional[ProcessorConfig] = None,
         graph_config: Optional[ProcessorConfig] = None,
         
         # Model options
         isne_config: Optional[ISNEConfig] = None,
         
-        # Processing pipeline options
+        # Processing options
         enable_chunking: bool = True,
+        chonky_model_id: str = "mirth/chonky_distilbert_uncased_1",  # Default Chonky model for non-code content
         enable_embedding: bool = True,
         enable_graph_processing: bool = True,
         enable_isne_model: bool = True,
@@ -89,6 +92,8 @@ class PipelineConfig:
             graph_config: Configuration for graph processor
             isne_config: Configuration for ISNE model
             enable_chunking: Whether to enable document chunking
+            use_chonky: Whether to use Chonky for semantic chunking of non-code content
+            chonky_model_id: Chonky model ID to use
             enable_embedding: Whether to enable document embedding
             enable_graph_processing: Whether to enable graph processing
             enable_isne_model: Whether to enable ISNE model
@@ -122,6 +127,12 @@ class PipelineConfig:
             batch_size=batch_size,
             use_gpu=use_gpu,
             cache_dir=os.path.join(self.cache_dir, "chunking")
+        )
+        
+        self.chonky_config = chonky_config or ProcessorConfig(
+            batch_size=batch_size,
+            use_gpu=use_gpu,
+            cache_dir=os.path.join(self.cache_dir, "chonky")
         )
         
         self.graph_config = graph_config or ProcessorConfig(
@@ -262,6 +273,7 @@ class ISNEPipeline:
         # Initialize components
         self.loader: Optional[BaseLoader] = None
         self.chunking_processor: Optional[ChunkingProcessor] = None
+        self.chonky_processor: Optional[ChonkyProcessor] = None
         self.embedding_processor: Optional[EmbeddingProcessor] = None
         self.graph_processor: Optional[GraphProcessor] = None
         self.isne_model: Optional[ISNEModel] = None
@@ -280,8 +292,10 @@ class ISNEPipeline:
     
     def _init_processors(self) -> None:
         """Initialize pipeline processors based on configuration."""
-        # Initialize chunking processor
+        # Initialize chunking processors
         if self.config.enable_chunking:
+            # Traditional text chunking processor (used for all documents if use_chonky=False,
+            # or only for code documents if use_chonky=True)
             self.chunking_processor = ChunkingProcessor(
                 processor_config=self.config.chunking_config,
                 chunk_size=1000,
@@ -290,6 +304,22 @@ class ISNEPipeline:
                 preserve_metadata=True,
                 create_relationships=True
             )
+            
+            # Always initialize Chonky for semantic chunking of non-code content
+            try:
+                self.chonky_processor = ChonkyProcessor(
+                    processor_config=self.config.chonky_config,
+                    model_id=self.config.chonky_model_id,
+                    device="cuda" if self.config.use_gpu else "cpu",
+                    preserve_metadata=True,
+                    create_relationships=True,
+                    text_only=True  # Only use Chonky for non-code content
+                )
+                logger.info(f"Initialized Chonky processor with model {self.config.chonky_model_id}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Chonky processor: {e}")
+                logger.warning("Falling back to traditional chunking for all documents")
+                self.chonky_processor = None
         
         # Initialize embedding processor
         if self.config.enable_embedding:
@@ -380,20 +410,105 @@ class ISNEPipeline:
         logger.info(f"Starting ISNE pipeline run {self.run_id} with {len(self.documents)} documents")
         
         # 1. Chunking (optional)
-        if self.config.enable_chunking and self.chunking_processor:
-            chunk_result = self._run_step(
-                "chunking",
-                lambda: self.chunking_processor.process(
-                    self.documents,
-                    self.relations,
-                    self.dataset
-                )
-            )
+        if self.config.enable_chunking:
+            # Always separate documents into code and non-code, using Chonky for non-code
+            if self.chonky_processor:
+                # Split documents into code and non-code
+                code_docs = [doc for doc in self.documents 
+                            if doc.document_type in ["code", "python", "javascript", "java", "cpp", "c", "go", "rust"]]
+                non_code_docs = [doc for doc in self.documents 
+                               if doc.document_type not in ["code", "python", "javascript", "java", "cpp", "c", "go", "rust"]]
+                
+                logger.info(f"Processing {len(non_code_docs)} non-code documents with Chonky semantic chunking")
+                logger.info(f"Processing {len(code_docs)} code documents with traditional chunking")
+                
+                # Process non-code docs with Chonky
+                if non_code_docs:
+                    chonky_result = self._run_step(
+                        "semantic_chunking",
+                        lambda: self.chonky_processor.process(
+                            non_code_docs,
+                            self.relations,
+                            self.dataset
+                        )
+                    )
+                    
+                    if chonky_result:
+                        processed_non_code = chonky_result.documents
+                        non_code_relations = chonky_result.relations
+                    else:
+                        # If Chonky fails, fall back to traditional chunking
+                        logger.warning("Falling back to traditional chunking for non-code documents")
+                        fallback_result = self.chunking_processor.process(
+                            non_code_docs,
+                            self.relations,
+                            self.dataset
+                        )
+                        processed_non_code = fallback_result.documents
+                        non_code_relations = fallback_result.relations
+                else:
+                    processed_non_code = []
+                    non_code_relations = []
+                
+                # Process code docs with traditional chunking
+                if code_docs and self.chunking_processor:
+                    code_result = self._run_step(
+                        "code_chunking",
+                        lambda: self.chunking_processor.process(
+                            code_docs,
+                            self.relations,
+                            self.dataset
+                        )
+                    )
+                    
+                    if code_result:
+                        processed_code = code_result.documents
+                        code_relations = code_result.relations
+                    else:
+                        processed_code = code_docs
+                        code_relations = []
+                else:
+                    processed_code = code_docs
+                    code_relations = []
+                
+                # Combine results
+                self.documents = processed_non_code + processed_code
+                
+                # Deduplicate relations (some might appear in both sets)
+                unique_relations = {}
+                for rel in self.relations + non_code_relations + code_relations:
+                    key = f"{rel.source_id}_{rel.target_id}_{rel.relation_type}"
+                    unique_relations[key] = rel
+                
+                self.relations = list(unique_relations.values())
+                
+                # Update dataset if it exists
+                if self.dataset:
+                    self.dataset.documents = {doc.id: doc for doc in self.documents}
+                    self.dataset.relations = {i: rel for i, rel in enumerate(self.relations)}
+                    self.dataset.metadata = self.dataset.metadata or {}
+                    self.dataset.metadata.update({
+                        "chunking_applied": True,
+                        "semantic_chunking_applied": True,
+                        "document_count": len(self.documents),
+                        "relation_count": len(self.relations)
+                    })
             
-            if chunk_result:
-                self.documents = chunk_result.documents
-                self.relations = chunk_result.relations
-                self.dataset = chunk_result.dataset
+            # Traditional chunking for all documents if Chonky failed to initialize
+            elif self.chunking_processor:
+                chunk_result = self._run_step(
+                    "chunking",
+                    lambda: self.chunking_processor.process(
+                        self.documents,
+                        self.relations,
+                        self.dataset
+                    )
+                )
+                
+                if chunk_result:
+                    self.documents = chunk_result.documents
+                    self.relations = chunk_result.relations
+                    self.dataset = chunk_result.dataset
         
         # 2. Embedding (optional)
         if self.config.enable_embedding and self.embedding_processor:

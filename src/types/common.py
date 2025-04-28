@@ -5,7 +5,7 @@ This module provides common type annotations used across the codebase
 to ensure consistency and improve type safety.
 """
 
-from typing import Dict, List, Any, Optional, Union, TypedDict, NewType
+from typing import Dict, List, Any, Optional, Union, TypedDict, NewType, ForwardRef
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -62,6 +62,15 @@ class IngestStats(TypedDict, total=False):
     document_count: int
     relationship_count: int
     storage_stats: Dict[str, Any]
+    # Additional optional statistics populated during ingestion
+    files_discovered: int
+    files_processed: int
+    entities_extracted: int
+    relationships_extracted: int
+    entities_stored: int
+    relationships_stored: int
+    repository_stats: Dict[str, Any]
+    status: str
 
 
 class PreProcessorConfig(TypedDict, total=False):
@@ -114,6 +123,8 @@ class StorageConfig(TypedDict, total=False):
     vector_dimensions: int
     working_dir: str
     cache_dir: str
+    # Embedding configuration nested inside storage config
+    embedding: 'EmbeddingConfig'
 
 
 class EmbeddingConfig(TypedDict, total=False):
@@ -140,3 +151,12 @@ class GraphConfig(TypedDict, total=False):
     node_collection: str
     edge_collection: str
     graph_algorithm: str
+
+
+class PathRankingConfig(TypedDict, total=False):
+    """Configuration for the PathRAG path ranking algorithm."""
+    semantic_weight: float  # Weight for semantic relevance (default: 0.7)
+    path_length_weight: float  # Weight for path length penalty (default: 0.1)
+    edge_strength_weight: float  # Weight for edge strength (default: 0.2)
+    max_path_length: int  # Maximum length of paths to consider (default: 5)
+    max_paths: int  # Maximum number of paths to return (default: 20)

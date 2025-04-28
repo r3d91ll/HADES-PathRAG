@@ -10,8 +10,13 @@ import logging
 from datetime import datetime
 
 try:
-    from arango import ArangoClient  # type: ignore[import-not-found]
-    from arango.exceptions import ArangoError  # type: ignore[import-not-found]
+    from arango import ArangoClient
+    from arango.exceptions import ArangoError
+    from arango.database import Database
+    from arango.collection import Collection
+    from arango.graph import Graph
+    from arango.cursor import Cursor
+    from arango.typings import Json as ArangoJson, DataTypes
 except ImportError:
     raise ImportError(
         "python-arango is required for ArangoGraphStore. "
@@ -93,14 +98,18 @@ class ArangoGraphStore:
         if not self.db.has_graph(self.graph_name):
             graph = self.db.create_graph(self.graph_name)
             # Define edge definition
-            graph.create_edge_definition(
-                edge_collection=self.edge_collection_name,
-                from_vertex_collections=[self.node_collection_name],
-                to_vertex_collections=[self.node_collection_name]
-            )
+            if isinstance(graph, Graph):
+                graph.create_edge_definition(
+                    edge_collection=self.edge_collection_name,
+                    from_vertex_collections=[self.node_collection_name],
+                    to_vertex_collections=[self.node_collection_name]
+                )
+            else:
+                # Handle the case where graph might be AsyncJob or BatchJob
+                logger.warning(f"Graph creation returned non-standard type: {type(graph)}")
             logger.info(f"Created graph: {self.graph_name}")
     
-    def store_hierarchical_graph(self, graph: HierarchicalGraph) -> Dict[str, Any]:
+    def store_hierarchical_graph(self, graph: HierarchicalGraph) -> StoreResults:
         """
         Store a complete hierarchical document graph in ArangoDB.
         
@@ -191,23 +200,25 @@ class ArangoGraphStore:
         edges = []
         
         # Add all vertices (nodes)
-        for vertex in traversal_results["vertices"]:
-            # Convert _key back to id
-            vertex["id"] = vertex.pop("_key")
-            nodes.append(vertex)
+        if isinstance(traversal_results, dict) and "vertices" in traversal_results:
+            for vertex in traversal_results["vertices"]:
+                # Convert _key back to id
+                vertex["id"] = vertex.pop("_key")
+                nodes.append(vertex)
         
         # Add all edges
-        for edge in traversal_results["edges"]:
-            # Convert _from and _to to from_id and to_id
-            from_id = edge["_from"].split("/")[1]
-            to_id = edge["_to"].split("/")[1]
-            edges.append({
-                "from_id": from_id,
-                "to_id": to_id,
-                "type": edge.get("type", "generic"),
-                "weight": edge.get("weight", 1.0),
-                "metadata": edge.get("metadata", {})
-            })
+        if isinstance(traversal_results, dict) and "edges" in traversal_results:
+            for edge in traversal_results["edges"]:
+                # Convert _from and _to to from_id and to_id
+                from_id = edge["_from"].split("/")[1]
+                to_id = edge["_to"].split("/")[1]
+                edges.append({
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "type": edge.get("type", "generic"),
+                    "weight": edge.get("weight", 1.0),
+                    "metadata": edge.get("metadata", {})
+                })
         
         # Return reconstructed hierarchy
         return {
@@ -251,6 +262,16 @@ class ArangoGraphStore:
           }}
         """
         
+        # Convert bind_vars to match expected ArangoDB type
+        adb_bind_vars: Dict[str, Any] = {}
+        for k, v in bind_vars.items():
+            adb_bind_vars[k] = v
+        
         # Execute query
-        cursor = self.db.aql.execute(aql, bind_vars=bind_vars)
-        return [document for document in cursor]
+        cursor = self.db.aql.execute(aql, bind_vars=adb_bind_vars)
+        # Handle the case where cursor might be AsyncJob, BatchJob or None
+        if isinstance(cursor, Cursor):
+            return [document for document in cursor]
+        else:
+            logger.warning(f"Query returned non-standard cursor type: {type(cursor)}")
+            return []

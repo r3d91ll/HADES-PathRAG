@@ -8,12 +8,12 @@ and the ISNE (Inductive Shallow Node Embedding) pipeline.
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Union, cast
+from typing import Dict, List, Any, Optional, Tuple, Union
 import logging
 from datetime import datetime
 import uuid
 
-from src.ingest.ingestor import RepositoryIngestor
+from src.ingest.orchestrator.ingestor import RepositoryIngestor
 from src.db.arango_connection import ArangoConnection
 from src.types.common import EmbeddingVector
 
@@ -30,6 +30,7 @@ from src.isne.loaders.text_directory_loader import TextDirectoryLoader
 from src.isne.processors.embedding_processor import EmbeddingProcessor
 from src.isne.processors.graph_processor import GraphProcessor
 from src.isne.integrations.arango_adapter import ArangoISNEAdapter
+import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -74,7 +75,6 @@ class ISNEIngestorConnector:
             self._init_isne_pipeline()
         
         # Initialize ArangoDB adapter
-        from typing import Optional
         self.arango_adapter: Optional[ArangoISNEAdapter]
         if self.arango_connection:
             self.arango_adapter = ArangoISNEAdapter(self.arango_connection)
@@ -329,11 +329,13 @@ class ISNEIngestorConnector:
         
         # If no adapter, try to update through ingestor
         elif self.ingestor and hasattr(self.ingestor, 'update_code_node_embedding'):
+            # Embedding is guaranteed not None here due to outer check
             # Convert numpy array to list if needed
+            final_embedding: Union[List[float], np.ndarray] = embedding
             if hasattr(embedding, 'tolist'):
-                embedding = embedding.tolist()
+                final_embedding = embedding.tolist()
                 
-            return bool(self.ingestor.update_code_node_embedding(node_id, embedding, metadata))
+            return bool(self.ingestor.update_code_node_embedding(node_id, final_embedding, metadata))
         
         return False
         
@@ -379,7 +381,9 @@ class ISNEIngestorConnector:
             # Create dataset
             dataset_name = f"dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             dataset_id = f"id_{dataset_name}"
-            dataset = IngestDataset(id=dataset_id, name=dataset_name, documents=isne_docs)
+            # Convert list of documents to dictionary keyed by document ID
+            isne_docs_dict = {doc.id: doc for doc in isne_docs}
+            dataset = IngestDataset(id=dataset_id, name=dataset_name, documents=isne_docs_dict)
             
             # Add relationships
             for doc in documents:
@@ -401,8 +405,10 @@ class ISNEIngestorConnector:
                         # Add to dataset
                         dataset.add_relation(relation)
             
-            # Process with ISNE pipeline
-            processed_dataset = self.isne_pipeline.process_dataset(dataset)
+            # Process with ISNE pipeline (assuming 'process' method accepts dataset)
+            # Run the ISNE pipeline (process does not take arguments)
+            process_stats = self.isne_pipeline.process()
+            processed_dataset = self.isne_pipeline.dataset
             
             if processed_dataset is None:
                 logger.error("ISNE pipeline returned None for processed dataset")
@@ -410,7 +416,7 @@ class ISNEIngestorConnector:
             
             # Convert back to dictionaries
             result_docs = []
-            for isne_doc in processed_dataset.documents:
+            for isne_doc in processed_dataset.documents.values():
                 # Find original document
                 original_doc = next((d for d in documents if d.get('id') == isne_doc.id), None)
                 if not original_doc:

@@ -20,6 +20,27 @@ from src.ingest.file_batcher import FileBatcher, collect_and_batch_files
 from src.ingest.pre_processor import get_pre_processor
 from src.ingest.parsers.code_parser import CodeParser
 
+# ArangoDB adapter for PathRAG
+class ArangoPathRAGAdapter:
+    """Interface for ArangoDB operations specific to PathRAG."""
+    
+    def __init__(self, db_connection: ArangoConnection):
+        """Initialize with ArangoDB connection."""
+        self.db_connection = db_connection
+    
+    def get_document(self, document_id: str) -> Dict[str, Any]:
+        """Get a document by its ID."""
+        result = self.db_connection.get_collection('code_nodes').get(document_id)
+        return result if result else {}
+    
+    def update_document(self, document_id: str, data: Dict[str, Any]) -> bool:
+        """Update a document."""
+        try:
+            self.db_connection.get_collection('code_nodes').update(document_id, data)
+            return True
+        except Exception:
+            return False
+
 from src.utils.git_operations import GitOperations
 from src.isne.integrations.storage import ArangoStorage
 
@@ -182,7 +203,9 @@ class RepositoryIngestor:
         
         # 2. Discover and batch files
         logger.info("Discovering and batching files...")
-        file_batches: Dict[str, List[str]] = self.batcher.collect_files(directory_path)
+        # Convert Path to str for collect_files which expects a string
+        dir_path_str = str(directory_path) if isinstance(directory_path, Path) else directory_path
+        file_batches: Dict[str, List[str]] = self.batcher.collect_files(dir_path_str)
         batch_stats: Dict[str, Any] = self.batcher.get_stats(file_batches)
         logger.info(f"Found {batch_stats['total']} files across {len(file_batches)} types")
         
@@ -383,53 +406,6 @@ class RepositoryIngestor:
             "edge_count": edge_count,
         }
     
-    @staticmethod
-    def _normalize_key(key: str) -> str:
-        """
-        Normalize a key to be valid for ArangoDB.
-        
-        Args:
-            key: Key to normalize
-            
-        Returns:
-            Normalized key
-        """
-        # Replace characters not allowed in ArangoDB keys
-        return key.replace('/', '_').replace(' ', '_').replace('-', '_').replace('.', '_')
-        
-            
-    def setup_collections(self) -> None:
-        """
-        Set up the necessary collections in the database.
-        """
-        try:
-            # Create graph if it doesn't exist
-            if not self.db_connection.graph_exists(self.CODE_GRAPH_NAME):
-                # Create edge definitions for the graph
-                edge_definitions = [
-                    {
-                        'edge_collection': self.CODE_EDGE_COLLECTION,
-                        'from_vertex_collections': [self.CODE_NODE_COLLECTION],
-                        'to_vertex_collections': [self.CODE_NODE_COLLECTION]
-                    }
-                ]
-                self.db_connection.create_graph(self.CODE_GRAPH_NAME, edge_definitions)
-            logger.info(f"Created graph {self.CODE_GRAPH_NAME}")
-            
-            # Create node collection if it doesn't exist
-            if not self.db_connection.collection_exists(self.CODE_NODE_COLLECTION):
-                self.db_connection.create_collection(self.CODE_NODE_COLLECTION)
-                logger.info(f"Created collection {self.CODE_NODE_COLLECTION}")
-            
-            # Create edge collection if it doesn't exist
-            if not self.db_connection.collection_exists(self.CODE_EDGE_COLLECTION):
-                self.db_connection.create_edge_collection(self.CODE_EDGE_COLLECTION)
-                logger.info(f"Created edge collection {self.CODE_EDGE_COLLECTION}")
-            
-        except Exception as e:
-            logger.error(f"Error setting up collections: {e}")
-            raise
-    
     def process_repository_with_isne(self, repo_path: Union[str, Path], repo_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a repository with the ISNE pipeline.
@@ -454,11 +430,9 @@ class RepositoryIngestor:
         
         logger.info(f"Processing repository {repo_name} with ISNE pipeline")
         
-        # Process repository with ISNE pipeline
-        # Lazy-load ISNE connector if not initialized
-        if self._isne_connector is None:
-            from src.isne.integrations.pathrag_adapter import PathRAGISNEAdapter
-            self._isne_connector = PathRAGISNEAdapter(db_connection=self.db_connection)
+        # Initialize ISNE pipeline
+        from src.isne.pipeline import PathRAGISNEAdapter
+        self._isne_connector = PathRAGISNEAdapter(self.db_connection)
             
         dataset: Any = self._isne_connector.process_repository(repo_path_obj, repo_name, store_in_arango=True)
         
@@ -498,9 +472,8 @@ class RepositoryIngestor:
             
             # Convert embedding to list if it's a numpy array
             if isinstance(embedding, np.ndarray):
-                embedding_list: List[float] = embedding.tolist()
-            else:
-                embedding_list: List[float] = embedding
+                result_embeddings = isne_resp.get("embeddings", [])
+            embedding_list = result_embeddings[0] if result_embeddings else []
             
             # Create update document
             update_doc: Dict[str, Any] = {
@@ -518,6 +491,9 @@ class RepositoryIngestor:
                     update_doc["metadata"] = merged_metadata
                 else:
                     update_doc["metadata"] = metadata
+            
+            # Get document properties using pathrag_adapter
+            doc_properties = self.pathrag_adapter.get_document(node_id)
             
             # Update node in database
             self.db_connection.update_document(
@@ -546,10 +522,9 @@ class RepositoryIngestor:
         Returns:
             List of similar code nodes with similarity scores
         """
-        # Lazy-load ISNE connector if not initialized
-        if self._isne_connector is None:
-            from src.isne.integrations.pathrag_adapter import PathRAGISNEAdapter
-            self._isne_connector = PathRAGISNEAdapter(db_connection=self.db_connection)
+        # Initialize ISNE pipeline
+        from src.isne.pipeline import PathRAGISNEAdapter
+        self._isne_connector = PathRAGISNEAdapter(self.db_connection)
             
         # Get embedding for code content
         embedding: Optional[EmbeddingVector] = self._isne_connector.get_document_embedding(code_content, "code")

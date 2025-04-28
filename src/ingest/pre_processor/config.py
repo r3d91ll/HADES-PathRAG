@@ -8,9 +8,10 @@ import json
 import os
 from typing import Dict, Any, cast
 from dataclasses import asdict
+from .config_models import PreProcessorConfig
 
 
-def load_config(config_path: str) -> 'PreProcessorConfig':
+def load_config(config_path: str) -> PreProcessorConfig:
     """
     Load configuration from a JSON file.
     
@@ -30,13 +31,12 @@ def load_config(config_path: str) -> 'PreProcessorConfig':
     try:
         with open(config_path, "r") as f:
             config_data = json.load(f)
-            from .config_models import PreProcessorConfig
             return PreProcessorConfig(**config_data)
     except json.JSONDecodeError as e:
         raise e
 
 
-def save_config(config: 'PreProcessorConfig', config_path: str) -> bool:
+def save_config(config: PreProcessorConfig, config_path: str) -> bool:
     """
     Save configuration to a JSON file.
     
@@ -61,15 +61,13 @@ def save_config(config: 'PreProcessorConfig', config_path: str) -> bool:
         return False
 
 
-def get_default_config() -> 'PreProcessorConfig':
+def get_default_config() -> PreProcessorConfig:
     """
     Get default configuration.
     
     Returns:
         Default configuration object
     """
-    from .config_models import PreProcessorConfig
-    
     return PreProcessorConfig(
         input_dir=".",
         output_dir="./output",
