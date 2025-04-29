@@ -29,12 +29,25 @@ This section describes the end-to-end ingestion pipeline for initial processing,
 
 ## Pipeline Overview
 
-The HADES-PathRAG ingestion pipeline consists of four main phases:
+The HADES-PathRAG ingestion pipeline consists of **five** main phases:
 
-1. **Pre-Processing**: Extract structure and content from files
-2. **Chunking**: Divide content into semantic chunks
-3. **Embedding**: Generate embeddings that capture content and relationships
-4. **Storage**: Store documents, relationships, and embeddings in ArangoDB
+1. **Pre-Processing** – extract structure and metadata from raw files
+2. **Chunking** – create syntactic _and_ semantic chunks
+3. **Embedding** – generate initial embeddings for every chunk/document
+4. **Graph + ISNE** – build the document graph and run the ISNE GNN to obtain **graph-aware** embeddings
+5. **Storage** – persist everything (documents, relations, vectors) in ArangoDB
+
+### Step-by-Step Walkthrough (current implementation)
+
+| # | Phase / Component | Purpose | Key Classes |
+|---|-------------------|---------|-------------|
+| 1 | Load files | Produce `IngestDocument` + optional relationships | `TextDirectoryLoader`, other loaders |
+| 2 | **ChonkyProcessor** | Split **text** docs into semantic paragraphs using `mirth/chonky_modernbert_large_1`<br>_No embeddings are produced here._ | `isne.processors.chonking_processor.ChonkyProcessor` |
+| 2a | Code chunking | Split **code** docs via symbol tables | `HybridChunkingProcessor` |
+| 3 | **EmbeddingProcessor** | Call vLLM-served `BAAI/bge-large-en-v1.5` to embed **all** documents & chunks | `isne.processors.embedding_processor.EmbeddingProcessor` |
+| 4 | Graph build | Convert explicit & inferred relations into a graph | `GraphProcessor` |
+| 4a | **ISNEModel** | Run GNN on the graph, producing graph-aware embeddings that are added as extra vector properties | `isne.models.isne_model.ISNEModel` |
+| 5 | Persist | Write nodes, edges, and both embedding sets to ArangoDB | `ArangoISNEAdapter` |
 
 ```mermaid
 graph TD
@@ -42,7 +55,8 @@ graph TD
     B --> C[Pre-Processing]
     C --> D[Chunking]
     D --> E[Embedding]
-    E --> F[Storage]
+    E --> F[Graph + ISNE]
+    F --> G[Storage]
     
     subgraph "Pre-Processing Phase"
         C --> C1[Python Pre-Processor]
@@ -57,16 +71,23 @@ graph TD
     end
     
     subgraph "Embedding Phase"
-        E --> E1[ISNE Pipeline]
+        E --> E1[EmbeddingProcessor]
         E1 --> E2[Document Embeddings]
-        E1 --> E3[Relationship Encoding]
+        E1 --> E3[Chunk Embeddings]
+    end
+    
+    subgraph "Graph + ISNE Phase"
+        F --> F1[GraphProcessor]
+        F1 --> F2[Document Graph]
+        F2 --> F3[ISNEModel]
+        F3 --> F4[Graph-Aware Embeddings]
     end
     
     subgraph "Storage Phase"
-        F --> F1[ArangoDB Adapter]
-        F1 --> F2[Document Collection]
-        F1 --> F3[Edge Collection]
-        F1 --> F4[Vector Collection]
+        G --> G1[ArangoISNEAdapter]
+        G1 --> G2[Document Collection]
+        G1 --> G3[Edge Collection]
+        G1 --> G4[Vector Collection]
     end
 ```
 
@@ -130,7 +151,7 @@ graph TD
     G --> H[Create Code Chunks]
     
     E --> I[Chonky Neural Chunker]
-    I --> J[mirth/chonky_modernbert_base_1]
+    I --> J[mirth/chonky_modernbert_large_1]
     J --> K[Create Text Chunks]
     
     H --> L[Document Chunks]
@@ -151,7 +172,7 @@ graph TD
   - Respects function/class boundaries
   
 - **Text Chunking**: Chonky neural chunking
-  - Uses `mirth/chonky_modernbert_base_1` model
+  - Uses `mirth/chonky_modernbert_large_1` model
   - Identifies semantic paragraph breaks
 
 For detailed information about our chunking strategy, including configurations and optimization techniques, see the [Chunking Strategy](./chunking.md) document.
@@ -167,46 +188,69 @@ The embedding phase generates vector representations that capture both content a
 
 ```mermaid
 graph TD
-    A[Chunked Documents] --> B[ISNE Pipeline]
+    A[Chunked Documents] --> B[EmbeddingProcessor]
     
     B --> C[Document Embedding]
-    B --> D[Relationship Processing]
+    B --> D[Chunk Embedding]
     
     C --> E[Content Embeddings]
-    D --> F[Graph Structure]
+    D --> F[Chunk Embeddings]
     
-    E & F --> G[ISNE Model]
-    G --> H[Integrate Content & Relationships]
+    E & F --> G[Initial Embeddings]
     
-    H --> I[Final Document Embeddings]
-    H --> J[Enhanced Relationship Information]
-    
-    I & J --> K[Embedded Documents]
+    G --> H[Embedded Documents]
 ```
 
 ### Embedding Key Components
 
-- **ISNE Pipeline**: Inductive Shallow Node Embedding
-  - Process both content and relationships
-  - Generate embeddings that capture semantic and structural information
+- **EmbeddingProcessor**: Embeds documents and chunks
+  - Uses `BAAI/bge-large-en-v1.5` model
+  - Generates initial embeddings for content and relationships
   
 - **Embedding Process**:
   - Generate initial content embeddings
-  - Process relationship information
+  - Generate chunk embeddings
   - Combine for final embeddings
 
 - **Output Format**: Documents with:
   - High-dimensional vector embeddings
-  - Enhanced relationship information
   - Metadata for retrieval
 
-## 4. Storage Phase
+## 4. Graph + ISNE Phase
+
+The graph + ISNE phase builds the document graph and runs the ISNE GNN to obtain graph-aware embeddings.
+
+```mermaid
+graph TD
+    A[Embedded Documents] --> B[GraphProcessor]
+    
+    B --> C[Document Graph]
+    C --> D[ISNEModel]
+    
+    D --> E[Graph-Aware Embeddings]
+    
+    E --> F[Updated Documents]
+```
+
+### Graph + ISNE Key Components
+
+- **GraphProcessor**: Builds the document graph
+  - Converts explicit and inferred relations into a graph
+  
+- **ISNEModel**: Runs the ISNE GNN
+  - Produces graph-aware embeddings that capture content and relationships
+  
+- **Output Format**: Documents with:
+  - Graph-aware embeddings
+  - Updated metadata
+
+## 5. Storage Phase
 
 The storage phase persists all information in ArangoDB graph database.
 
 ```mermaid
 graph TD
-    A[Embedded Documents] --> B[ArangoStorage Adapter]
+    A[Updated Documents] --> B[ArangoISNEAdapter]
     
     B --> C[Create Document Nodes]
     B --> D[Create Relationship Edges]
@@ -225,7 +269,7 @@ graph TD
 
 ### Storage Key Components
 
-- **ArangoStorage**: Adapter for ArangoDB operations
+- **ArangoISNEAdapter**: Adapter for ArangoDB operations
   - Handles document creation and updates
   - Manages relationship edges
   - Stores vector embeddings

@@ -28,10 +28,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-def create_documentation_config() -> Dict[str, Any]:
+def create_documentation_config(db_name: str = "pathrag_docs") -> Dict[str, Any]:
     """
     Create a configuration optimized for documentation ingestion.
     
+    Args:
+        db_name: Name of the ArangoDB database to use
+        
     Returns:
         Configuration dictionary
     """
@@ -41,7 +44,7 @@ def create_documentation_config() -> Dict[str, Any]:
         "port": 8529,
         "username": "root",
         "password": "",
-        "database": "pathrag_docs",
+        "database": db_name,
         "collection_prefix": "docs_",
         "use_vector_index": True,
         "vector_dimensions": 768,
@@ -87,25 +90,62 @@ def create_documentation_config() -> Dict[str, Any]:
     }
 
 
-def ingest_documentation(docs_dir: Path, dataset_name: Optional[str] = None) -> Dict[str, Any]:
+def ingest_documentation(docs_dir: Path, dataset_name: Optional[str] = None, 
+                    db_name: str = "pathrag_docs", db_mode: str = "append",
+                    force: bool = False) -> Dict[str, Any]:
     """
     Ingest documentation from a directory.
     
     Args:
         docs_dir: Directory containing documentation
         dataset_name: Optional name for the dataset
+        db_name: Name of ArangoDB database to use
+        db_mode: Database mode ('create' or 'append')
+        force: Force recreation of collections even if they exist
         
     Returns:
         Ingestion results and statistics
     """
     # Get configuration
-    config = create_documentation_config()
+    config = create_documentation_config(db_name=db_name)
     
     # Create repository ingestor
     ingestor = RepositoryIngestor(
         storage_config=config["storage"],
         preprocessor_config=config["preprocessor"]
     )
+    
+    # Handle database mode
+    repository = ingestor.get_repository()
+    if db_mode == "create":
+        # If force is True, first drop collections if they exist
+        if force and repository:
+            try:
+                conn = repository.connection
+                graph_name = repository.graph_name
+                node_col = repository.node_collection_name
+                edge_col = repository.edge_collection_name
+                
+                # Delete graph first (important)
+                if conn.graph_exists(graph_name):
+                    logger.info(f"Dropping existing graph {graph_name}")
+                    conn.delete_graph(graph_name, drop_collections=True)
+                
+                # Delete collections as fallback
+                if conn.collection_exists(node_col):
+                    logger.info(f"Dropping existing node collection {node_col}")
+                    conn.delete_collection(node_col)
+                    
+                if conn.collection_exists(edge_col):
+                    logger.info(f"Dropping existing edge collection {edge_col}")
+                    conn.delete_collection(edge_col)
+            except Exception as e:
+                logger.error(f"Error during forced collection cleanup: {e}")
+        
+        # Explicitly setup collections
+        if repository:
+            logger.info("Setting up collections explicitly in 'create' mode")
+            repository.setup_collections()
     
     # Ingest documentation
     logger.info(f"Starting documentation ingestion from {docs_dir}")
@@ -153,7 +193,13 @@ def main():
         return 1
     
     # Ingest documentation
-    results = ingest_documentation(docs_dir, args.dataset_name)
+    results = ingest_documentation(
+        docs_dir, 
+        dataset_name=args.dataset_name,
+        db_name=args.db_name if hasattr(args, 'db_name') else "pathrag_docs",
+        db_mode=args.db_mode if hasattr(args, 'db_mode') else "append",
+        force=args.force if hasattr(args, 'force') else False
+    )
     
     # Save results if requested
     if args.output_file:

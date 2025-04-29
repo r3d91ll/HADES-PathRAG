@@ -6,11 +6,11 @@ Loads, merges, and validates pre-processor configuration from YAML.
 import os
 import yaml
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, List, cast
 from src.types.common import PreProcessorConfig
 
 # Defaults (should match those in preprocessor_config.yaml)
-DEFAULT_FILE_TYPE_MAP = {
+DEFAULT_FILE_TYPE_MAP: Dict[str, List[str]] = {
     'python': ['.py'],
     'javascript': ['.js', '.jsx', '.ts', '.tsx'],
     'java': ['.java'],
@@ -24,7 +24,7 @@ DEFAULT_FILE_TYPE_MAP = {
     'xml': ['.xml'],
 }
 
-DEFAULT_PREPROCESSOR_CONFIG = {
+DEFAULT_PREPROCESSOR_CONFIG: Dict[str, Dict[str, Any]] = {
     'python': {
         'create_symbol_table': True,
         'extract_docstrings': True,
@@ -37,7 +37,7 @@ DEFAULT_PREPROCESSOR_CONFIG = {
     }
 }
 
-DEFAULTS = {
+DEFAULTS: Dict[str, Any] = {
     'version': 1,
     'exclude_patterns': ['__pycache__', '.git'],
     'recursive': True,
@@ -59,22 +59,52 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> PreProcessorC
     with open(path, 'r') as f:
         user_config = yaml.safe_load(f) or {}
 
-    # Merge user config with defaults
-    # Merge top-level keys
-    config = dict(DEFAULTS)
-    config.update(user_config)
-    # Merge nested dicts
-    config['file_type_map'] = {**DEFAULTS['file_type_map'], **user_config.get('file_type_map', {})}
-    config['preprocessor_config'] = {**DEFAULTS['preprocessor_config'], **user_config.get('preprocessor_config', {})}
+    # Create fresh dictionaries with proper types
+    exclude_patterns: List[str] = list(DEFAULTS['exclude_patterns'])
+    recursive: bool = bool(DEFAULTS['recursive'])
+    max_workers: int = int(DEFAULTS['max_workers'])
+    options: Dict[str, Any] = dict(DEFAULTS['options'])
+    
+    # Update from user config
+    if 'exclude_patterns' in user_config and isinstance(user_config['exclude_patterns'], list):
+        exclude_patterns = list(user_config['exclude_patterns'])
+    if 'recursive' in user_config:
+        recursive = bool(user_config['recursive'])
+    if 'max_workers' in user_config:
+        max_workers = int(user_config['max_workers'])
+    if 'options' in user_config and isinstance(user_config['options'], dict):
+        options = dict(user_config['options'])
+    
+    # Handle nested dictionaries
+    file_type_map: Dict[str, List[str]] = dict(DEFAULT_FILE_TYPE_MAP)
+    if 'file_type_map' in user_config and isinstance(user_config['file_type_map'], dict):
+        # Merge file type map
+        for key, value in user_config['file_type_map'].items():
+            if isinstance(value, list):
+                file_type_map[key] = list(value)
+    
+    preprocessor_config: Dict[str, Dict[str, Any]] = dict(DEFAULT_PREPROCESSOR_CONFIG)
+    if 'preprocessor_config' in user_config and isinstance(user_config['preprocessor_config'], dict):
+        # Merge preprocessor config
+        for key, value in user_config['preprocessor_config'].items():
+            if isinstance(value, dict):
+                if key in preprocessor_config:
+                    # Update existing dictionary
+                    preprocessor_config[key].update(value)
+                else:
+                    # Add new dictionary
+                    preprocessor_config[key] = dict(value)
 
     # Build PreProcessorConfig TypedDict
-    return PreProcessorConfig(
+    result = PreProcessorConfig(
         input_dir=Path(user_config.get('input_dir', '.')),
         output_dir=Path(user_config.get('output_dir', user_config.get('input_dir', '.') + '/.symbol_table')),
-        exclude_patterns=config['exclude_patterns'],
-        recursive=config['recursive'],
-        max_workers=config['max_workers'],
-        file_type_map=config['file_type_map'],
-        preprocessor_config=config['preprocessor_config'],
-        options=config['options'],
+        exclude_patterns=exclude_patterns,
+        recursive=recursive,
+        max_workers=max_workers,
+        file_type_map=file_type_map,
+        preprocessor_config=preprocessor_config,
+        options=options,
     )
+    
+    return result

@@ -1,0 +1,81 @@
+# vLLM Configuration for HADES-PathRAG
+# This file configures both ingestion and inference models
+
+# Global server settings
+server:
+  host: localhost
+  port: 8000
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.85
+  dtype: auto
+  max_model_len: 4096
+
+# Ingestion-related models (used by Chonky, ISNE, etc.)
+ingestion:
+  # Primary embedding model for document ingestion
+  # After Chonky creates semantic chunks, this model embeds them
+  # These embeddings are then used as input features for the ISNE GNN
+  embedding:
+    model_id: BAAI/bge-large-en-v1.5
+    max_tokens: 512
+    context_window: 4096
+    truncate_input: true
+    
+  # Chunking model for Chonky semantic chunking
+  # Used by ChonkyProcessor for semantic document chunking
+  # Note: Chonky only performs chunking and does NOT create embeddings
+  chunking:
+    model_id: mirth/chonky_modernbert_large_1
+    max_tokens: 1024
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 40
+    context_window: 8192
+    truncate_input: true
+    
+  # Relationship extraction model for ISNE
+  # Used to extract relationships between documents if not already defined
+  relationship:
+    model_id: Qwen2.5-7b-instruct
+    max_tokens: 1024
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 50
+    context_window: 8192
+    truncate_input: true
+    
+  # Note: The ISNE model itself is a Graph Neural Network implemented with PyTorch Geometric
+  # It is not directly a vLLM model, but uses the embeddings from the embedding model above
+  # The ISNE model creates graph embeddings that are stored in ArangoDB
+
+# Inference-related models (used for querying the knowledge base)
+inference:
+  # Default general-purpose model
+  general:
+    model_id: Llama-3-8b
+    max_tokens: 2048
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 40
+    context_window: 8192
+    truncate_input: true
+    
+  # Code-specific model for programming tasks
+  code:
+    model_id: Qwen2.5-coder
+    max_tokens: 4096
+    temperature: 0.2
+    top_p: 0.95
+    top_k: 50
+    context_window: 16384
+    truncate_input: true
+    
+  # Fast model for quick responses when appropriate
+  fast:
+    model_id: Qwen2.5-7b
+    max_tokens: 1024
+    temperature: 0.8
+    top_p: 0.9
+    top_k: 40
+    context_window: 8192
+    truncate_input: true

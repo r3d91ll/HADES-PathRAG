@@ -17,7 +17,16 @@ from .common import (
     GraphConfig
 )
 
+from .vllm_types import (
+    VLLMServerConfigType,
+    VLLMModelConfigType,
+    VLLMConfigType,
+    ModelMode,
+    ServerStatusType
+)
+
 __all__ = [
+    # Common types
     "NodeID",
     "EdgeID", 
     "NodeData", 
@@ -26,5 +35,12 @@ __all__ = [
     "DocumentContent",
     "StorageConfig",
     "EmbeddingConfig",
-    "GraphConfig"
+    "GraphConfig",
+    
+    # vLLM types
+    "VLLMServerConfigType",
+    "VLLMModelConfigType",
+    "VLLMConfigType",
+    "ModelMode",
+    "ServerStatusType"
 ]

@@ -8,9 +8,11 @@ from typing import Type, cast
 
 
 from .llm import (
-    gpt_4o_mini_complete,
-    openai_embedding,
+    vllm_model_complete,
 )
+
+# Import vLLM adapter for completions and embeddings
+from .vllm_adapter import vllm_embed
 from .operate import (
     chunking_by_token_size,
     extract_entities,
@@ -145,12 +147,12 @@ class PathRAG:
     )
 
 
-    embedding_func: EmbeddingFunc = field(default_factory=lambda: openai_embedding)
+    embedding_func: EmbeddingFunc = vllm_embed
     embedding_batch_num: int = 32
     embedding_func_max_async: int = 16
 
 
-    llm_model_func: callable = gpt_4o_mini_complete  
+    llm_model_func: callable = vllm_model_complete  
     llm_model_name: str = "meta-llama/Llama-3.2-1B-Instruct"  
     llm_model_max_token_size: int = 32768
     llm_model_max_async: int = 16

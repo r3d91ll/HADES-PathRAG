@@ -5,6 +5,9 @@ torch>=1.10.0
 torch_geometric>=2.0.0  # For ISNE graph operations
 pyarango>=2.0.0  # ArangoDB client for Python
 
+# LLM dependencies
+vllm>=0.3.0  # For accelerated model serving and inference
+
 # API dependencies
 fastapi>=0.95.0
 uvicorn>=0.22.0

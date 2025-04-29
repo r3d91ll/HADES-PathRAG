@@ -823,25 +823,25 @@ class ArangoRepository(UnifiedRepository):
             # Get most connected nodes
             top_nodes_cursor = self.connection.query(
                 """
-                FOR d IN documents
+                FOR d IN @@nodes
                     LET links = LENGTH(
-                        FOR l IN links
+                        FOR l IN @@edges
                             FILTER l._from == d._id OR l._to == d._id
                             RETURN 1
                     )
                     SORT links DESC
                     LIMIT @limit
-                    RETURN {d._key: links}
+                    RETURN { "key": d._key, "links": links }
                 """,
-                bind_vars={"limit": limit}
+                bind_vars={"limit": limit, "@nodes": self.node_collection_name, "@edges": self.edge_collection_name}
             )
             
             # Compile top nodes
             top_nodes_stats: Dict[str, int] = {}
-            if top_nodes_cursor: 
+            if top_nodes_cursor:
                 for node_obj in top_nodes_cursor:
-                    if isinstance(node_obj, dict):
-                        top_nodes_stats.update(node_obj)
+                    if isinstance(node_obj, dict) and "key" in node_obj and "links" in node_obj:
+                        top_nodes_stats[str(node_obj["key"])] = int(node_obj["links"])
             
             return top_nodes_stats
         except Exception as e:
@@ -856,18 +856,14 @@ class ArangoRepository(UnifiedRepository):
             True if vectors exist, False otherwise
         """
         try:
-            # Query for any document with a non-null embedding field using AQL execute
-            cursor = self.connection.db.aql.execute(
-                "FOR d IN documents FILTER d.embedding != null LIMIT 1 RETURN true",
-                count=True
+            # Query for any document with a non-null embedding field using AQL
+            cursor = self.connection.query(
+                "FOR d IN @@nodes FILTER d.embedding != null LIMIT 1 RETURN true",
+                {"@nodes": self.node_collection_name}
             )
-            # Check count only if cursor is valid and the correct type
-            if cursor and isinstance(cursor, Cursor):
-                count = cursor.count()
-                # Ensure count is not None before comparing
-                return bool(count is not None and count > 0)
-            else:
-                return False # Return False if cursor is not valid
+            
+            # Check cursor for results
+            return bool(cursor and len(cursor) > 0)
         except Exception as e:
             logger.error(f"Error checking for document vectors: {e}")
             return False
