@@ -1,121 +1,114 @@
 # Hybrid Chunking Strategy for HADES-PathRAG
 
-This document outlines the approach for implementing a hybrid chunking strategy that combines symbol table-based code chunking with neural text chunking using Chonky.
-
 ## Overview
 
-The HADES-PathRAG system processes both code and documentation. Each content type requires specialized chunking:
+HADES-PathRAG supports first-class chunking utilities out of the box:
 
-- **Code Files**: Require structure-aware chunking that respects function, class, and method boundaries
-- **Text Documents**: Benefit from semantic chunking that identifies natural paragraph breaks
+| Content type | Entrypoint | Strategy |
+|--------------|-----------|----------|
+| Python code  | `chunk_code` | AST walk – emits one chunk per function / class plus a *module* chunk |
+| Markdown / plain-text | `chunk_text` | [Chonky](https://github.com/mithril-security/chonky) semantic paragraph splitter |
 
-Our hybrid approach uses the best tool for each content type:
-
-1. **Symbol Tables** for code structure preservation
-2. **Chonky Neural Chunker** for semantic text chunking
-
-## Integration Plan
-
-### 1. Dependencies
-
-Add Chonky to project dependencies:
+Both helpers live in `src.ingest.chunking` and share a **single public interface** so downstream components (embedding, ingestion, RAG) can treat code & text uniformly.
 
 ```python
-# pyproject.toml
-"chonky>=0.1.0",  # Neural text chunking
+from src.ingest.chunking import chunk_code, chunk_text
+
+# code_doc & text_doc are outputs from the relevant pre-processors
+code_chunks = chunk_code(code_doc)                       # ← list[dict]
+text_chunks_json = chunk_text(text_doc, output_format="json")  # ← JSON string
 ```
 
-### 2. Hybrid Chunking Processor
+### Output format toggle
 
-Create a hybrid processor that selects the appropriate chunking method based on content type:
+`chunk_code` and `chunk_text` accept an optional `output_format` parameter:
+
+* **"python"** (default) – returns `list[dict]`
+* **"json"** – returns a JSON string (`json.dumps(..., indent=2)`)
+
+This allows seamless integration with pipelines that expect raw Python objects *or* need to stream JSON to external services.
+
+## Implementation Details
+
+Internally the package is split into two sub-modules:
+
+* `code_chunkers/ast_chunker.py` – walks the AST, respects token budgets, and attaches rich symbol metadata.
+* `text_chunkers/chonky_chunker.py` – lazy-loads a Chonky `ParagraphSplitter`, converts its generator output to chunks, and supports the new `output_format` switch.
+
+Both are wired through `src.ingest.chunking.code_chunkers.__init__.py`, which dispatches on document `type`.
+
+```mermaid
+flowchart LR
+    subgraph Code
+        A[PythonPreProcessor]
+        A -->|document| B(chunk_code)
+        B -->|chunks| C(Embedding)
+    end
+
+    subgraph Text
+        D[MarkdownPreProcessor]
+        D -->|document| E(chunk_text)
+        E -->|chunks| C
+    end
+```
+
+### Chunk schema
+
+Every chunk dict contains at minimum:
+
+| Field | Example | Notes |
+|-------|---------|-------|
+| `id` | `chunk:abc123` | 8-char UUID suffix |
+| `parent` | `doc:deadbeef` | Hash of source path |
+| `path` | `src/foo/bar.py` | Original file path |
+| `type` | `python`, `markdown` | Document type |
+| `content` | *string* | The chunk’s text |
+| `symbol_type` | `function`, `class`, `paragraph` | High-level category |
+
+Extra language-specific fields (e.g. `name`, `line_start`, `line_end`) are included where relevant.
+
+## Configuration
+
+Chunking defaults live in `src/config/chunker_config.yaml`. Override values (e.g. alternative Chonky model, max token budget) either via that file or programmatically:
 
 ```python
-class HybridChunkingProcessor(ChunkingProcessor):
-    """
-    Hybrid chunking processor using Chonky for text and symbol tables for code.
-    """
-    
-    def __init__(
-        self,
-        processor_config: Optional[ProcessorConfig] = None,
-        chonky_model_id: str = "mirth/chonky_modernbert_base_1",
-        device: str = "cpu",
-        symbol_table_dir: str = ".symbol_table",
-        **kwargs
-    ) -> None:
-        super().__init__(processor_config=processor_config, **kwargs)
-        
-        # Initialize Chonky for text documents
-        self.text_splitter = TextSplitter(model_id=chonky_model_id, device=device)
-        self.symbol_table_dir = symbol_table_dir
+from src.config.chunker_config import get_chunker_config
+
+cfg = get_chunker_config("chonky")
+cfg["max_tokens"] = 1024
 ```
 
-### 3. Content-Specific Processing
+## Dependency
 
-The processor selects the appropriate method based on content type:
+Add to `pyproject.toml` / `requirements.txt`:
 
-- **Python Code**: Uses symbol tables created by PythonPreProcessor
-- **Other Code**: Uses syntax-aware heuristics
-- **Text Documents**: Uses Chonky neural chunker
-
-### 4. Symbol Table Format
-
-The Python pre-processor creates symbol tables in `.symbol_table/filename.symbols` with the format:
-
-```text
-FILE:file_name.py
-CLASS:ClassName:line_start-line_end
-METHOD:ClassName.method_name
-FUNCTION:function_name:line_start-line_end
-IMPORT:module.name
+```toml
+chonky>=0.1.0
 ```
 
-### 5. Chunk Metadata & Relationships
+GPU acceleration is optional – pass `device="cuda:0"` to `chunk_text` or set it in the config.
 
-For each chunk, we store:
+## Testing
 
-- Parent document reference
-- Chunk index and total count
-- Chunking method used
-- Symbol information (for code chunks)
+The following pytest suites cover chunking behaviour:
 
-We also create explicit relationships between chunks and parent documents using:
+* `tests/test_chunk_integration.py` – end-to-end pipeline
+* `tests/test_text_chunker.py` – Chonky specifics & JSON mode
+* `tests/test_chunk_output_format.py` – JSON round-trip for both code & text
 
-```python
-relation = DocumentRelation(
-    source_id=document.id,
-    target_id=chunk_id,
-    relation_type=RelationType.CONTAINS,
-    weight=1.0,
-    metadata={...}
-)
+Run:
+
+```bash
+pytest -q tests/test_chunk_*  # fast, no DB required
 ```
 
-## Configuration Options
+## Next steps
 
-The hybrid chunking processor supports configuration via:
+Chunking is now stable and documented.  Future enhancements might include:
 
-```json
-"chunking": {
-    "use_hybrid_chunker": True,
-    "chonky_model": "mirth/chonky_modernbert_base_1",
-    "device": "cpu",
-    "symbol_table_dir": ".symbol_table"
-}
-```
+* Language-aware code chunkers for JavaScript, Java, etc.
+* Automatic token-aware re-chunking for oversize functions / paragraphs.
+* Parallel Chonky inference with `torch.multiprocessing` for large corpora.
 
-## Benefits
-
-1. **Improved Code Context**: Symbol tables ensure code chunks maintain functional boundaries
-2. **Better Text Chunking**: Chonky provides semantically coherent text chunks
-3. **Enhanced Embeddings**: Better chunks lead to more relevant embeddings
-4. **Unified API**: Common interface for both code and text
-5. **Fallback Strategies**: Graceful degradation if symbol tables aren't available
-
-## Implementation Timeline
-
-1. Complete pre-processor integration
-2. Add Chonky dependency
-3. Implement HybridChunkingProcessor
-4. Update ISNE pipeline configuration
-5. Create tests for both code and text chunking approaches
+---
+*Last updated: April 30 2025*
