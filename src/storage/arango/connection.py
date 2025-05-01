@@ -42,9 +42,52 @@ class ArangoConnection:
     DEFAULT_EDGE_COLLECTION: ClassVar[str] = "edges"
     DEFAULT_GRAPH_NAME: ClassVar[str] = "pathrag"
     
-    __slots__ = ("config", "_db")
+    __slots__ = ("config", "_db", "_client", "_username", "_password")
 
     config: StorageConfig
+
+    # ------------------------------------------------------------------
+    # Custom flexible constructor ------------------------------------------------
+    # ------------------------------------------------------------------
+
+    def __init__(
+        self,
+        config: Optional[StorageConfig] = None,
+        *,
+        db_name: Optional[str] = None,
+        host: str = "http://localhost:8529",
+        username: str = "root",
+        password: str = "",
+    ) -> None:  # noqa: D401
+        """Create a connection to ArangoDB.
+        
+        This constructor is *backwards-compatible* with the legacy signature
+        used throughout the test-suite (`ArangoConnection(db_name=..., host=..., ... )`).
+        
+        If a ``config`` mapping is supplied we use that directly. Otherwise we
+        build one from the explicit keyword arguments.
+        """
+        
+        if config is None:
+            # Build config from individual parameters for compatibility
+            cfg: StorageConfig = {
+                "database": db_name or "hades",
+                "host": host,
+                "username": username,
+                "password": password,
+            }
+            config = cfg
+        
+        # dataclass emulation – we need to set the field manually and then call
+        # __post_init__ which performs the real connection logic
+        object.__setattr__(self, "config", config)
+        
+        # Establish connection inside __post_init__
+        self.__post_init__()
+
+    # ------------------------------------------------------------------
+    # Internal initialisation ---------------------------------------------------
+    # ------------------------------------------------------------------
 
     def __post_init__(self) -> None:
         host = self.config.get("host", "http://localhost:8529")
@@ -55,8 +98,11 @@ class ArangoConnection:
         logger.info(
             "Connecting to ArangoDB", extra={"host": host, "db": database, "user": username}
         )
-        client = ArangoClient(hosts=host)
-        self._db: StandardDatabase = client.db(database, username=username, password=password)
+        self._client: ArangoClient = ArangoClient(hosts=host)
+        self._db: StandardDatabase = self._client.db(database, username=username, password=password)
+        # Save credentials for helper calls
+        self._username = username
+        self._password = password
 
     # ------------------------------------------------------------------
     # Collections helpers
@@ -137,6 +183,26 @@ class ArangoConnection:
         """Return the underlying python-arango `StandardDatabase`."""
         return self._db
         
+    # Provide access to the ArangoClient for legacy tests
+    @property
+    def client(self) -> ArangoClient:  # noqa: D401
+        """Return the underlying `ArangoClient` (legacy helper)."""
+        return self._client
+
+    # ------------------------------------------------------------------
+    # Misc helpers needed by test-suite
+    # ------------------------------------------------------------------
+
+    def database_exists(self, name: str) -> bool:  # noqa: D401
+        """Check if a database exists (helper for integration tests)."""
+        try:
+            # Get a system database connection
+            sys_db = self._client.db("_system", username=self._username, password=self._password)
+            return bool(sys_db.has_database(name))
+        except Exception as e:
+            logger.error(f"Error checking if database exists: {e}")
+            return False
+
     # ------------------------------------------------------------------
     # Initialization and bootstrap helpers
     # ------------------------------------------------------------------

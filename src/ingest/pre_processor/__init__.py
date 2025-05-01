@@ -26,6 +26,7 @@ from .base_pre_processor import BasePreProcessor
 from .python_pre_processor import PythonPreProcessor
 from .file_processor import FileProcessor
 from .docling_pre_processor import DoclingPreProcessor
+from .website_pdf_pre_processors import WebsitePreProcessor, PDFPreProcessor
 
 # Registry of pre-processors by file type - declare before manager import
 PRE_PROCESSOR_REGISTRY: Dict[str, Type[BasePreProcessor]] = {
@@ -33,6 +34,9 @@ PRE_PROCESSOR_REGISTRY: Dict[str, Type[BasePreProcessor]] = {
     'markdown': DoclingPreProcessor,
     'pdf': DoclingPreProcessor,
     'html': DoclingPreProcessor,
+    'website': WebsitePreProcessor,
+    'website_html': WebsitePreProcessor,
+    'pdf_file': PDFPreProcessor,
     'docx': DoclingPreProcessor,
     # Add other Docling-supported types as needed
 }

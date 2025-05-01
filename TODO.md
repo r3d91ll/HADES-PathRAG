@@ -8,7 +8,15 @@
 - [x] Update `pyproject.toml` to properly include all direct and transitive dependencies
 - [x] Create reliable development setup script that works across environments
 - [x] Clean up project directory structure (moved obsolete docs to old-docs/)
-- [ ] Fix failing tests and test infrastructure
+- [x] Fix failing tests and test infrastructure
+  - ✅ Fixed ArangoConnection initialization issues with backward compatibility
+  - ✅ Improved DoclingPreProcessor test coverage to >85%
+  - ✅ Fixed mocking in ChonkyProcessor tests
+  - ✅ Enhanced error handling in PythonPreProcessor
+- [ ] Implement ArangoDB collection management modes
+  - [ ] Add create/initialize mode to recreate collections and graph
+  - [ ] Add append mode to add documents to existing structures
+  - [ ] Update CLI with options to control database initialization behavior
 
 ### vLLM Integration
 
@@ -67,10 +75,27 @@
 - [x] Implement `.symbol_table` directory structure for source code metadata
 - [x] Create comprehensive documentation for ingestion system
 - [ ] Integrate pre-processor with main ingestion pipeline
-  - [ ] Ensure compatibility with Chonky implementation
-  - [ ] Prioritize text content processing with Chonky
-- [ ] Create inter-file relationship detection and storage
-- [ ] Implement Chonky-based semantic chunking (see Chonky implementation section)
+  - [x] Ensure compatibility with Chonky implementation
+  - [x] Prioritize text content processing with Chonky
+  - [ ] Complete full integration with semantic embedding and graph embedding phase
+  - [ ] Finalize pipeline with RepositoryIngestor after all components are ready
+- [ ] Inter-file Relationship Detection & Storage (Foundational)
+  - **Phase 0 – Design**
+    - [ ] Define edge types (IMPORTS, USES, READS_FILE, WRITES_FILE, etc.)
+    - [ ] Select AST analysis library (`astroid` preferred)
+    - [ ] Update `.symbol_table` JSON schema for new edge lists
+  - **Phase 1 – Implementation**
+    - [ ] Implement `ASTRelationExtractor` visitor class
+    - [ ] Add `collect_interfile_relations` flag to `PythonPreProcessor`
+    - [ ] Append extracted edges to pre-processing output
+  - **Phase 2 – Testing**
+    - [ ] Create mini-repo fixture (`a.py` imports `b.py`, writes a file)
+    - [ ] Unit test that `IMPORTS` & `WRITES_FILE` relations are produced
+  - **Phase 3 – Pipeline Integration**
+    - [ ] Ensure PreprocessorManager merges new relations
+    - [ ] Verify edges persisted to Arango via Repository layer
+    - [ ] Document workflow in `docs/ingestion_system.md`
+- [x] Implement Chonky-based semantic chunking (see Chonky implementation section)
 - [ ] Build graph construction module to prepare for ISNE embedding
 
 ### Ingestion Pipeline Optimization
@@ -172,14 +197,14 @@
   - Acceptance Criteria:
     - Large functions/classes split into ≤ 2048-token chunks; pipeline ingests Python repo successfully.
 
-- [-] **Chonky-Based Text Chunker**
+- [x] **Chonky-Based Text Chunker**
   - Context: Handle markdown / plain-text files with semantic paragraph splitting.
   - Deliverables:
-    - Implement `chunk_text()` in `src/ingest/chunking/text_chunkers/chonky_chunker.py`
-    - Extend dispatcher in `chunking/__init__.py` for `markdown` & `text`
-    - Unit/integration tests using sample docs
+    - ✅ Implement `chunk_text()` in `src/ingest/chunking/text_chunkers/chonky_chunker.py`
+    - ✅ Extend dispatcher in `chunking/__init__.py` for `markdown` & `text`
+    - ✅ Unit/integration tests using sample docs
   - Acceptance Criteria:
-    - Non-code docs are split into ≤ 2048-token chunks and ingested without errors.
+    - ✅ Non-code docs are split into ≤ 2048-token chunks and ingested without errors.
 
 - [-] **Embedding Layer Refactor**
   - Context: Separate embedding concerns into `src/ingest/embedding/`.

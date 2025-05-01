@@ -72,7 +72,17 @@ class PythonPreProcessor(BasePreProcessor):
             logger.error(
                 "Syntax error while parsing %s: %s – file will be skipped", file_path, e
             )
-            return None
+            # Return error information instead of None for better error handling
+            return {
+                "error": f"Syntax error: {e}",
+                "path": file_path,
+                "type": "python",
+                "metadata": {
+                    "error_type": "syntax_error",
+                    "error_msg": str(e)
+                },
+                "content": ""    # Empty content
+            }
             
         # Extract functions, classes, and imports
         functions = self._extract_functions(tree)

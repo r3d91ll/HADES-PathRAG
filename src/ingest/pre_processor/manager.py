@@ -73,7 +73,7 @@ class PreprocessorManager:
     
     def _create_core_preprocessors(self) -> None:
         """Create the core set of preprocessors."""
-        for processor_type in ["python", "markdown", "docling"]:
+        for processor_type in ["python", "markdown", "docling", "website", "pdf"]:
             try:
                 # Create the preprocessor
                 preprocessor = get_pre_processor(processor_type)
@@ -318,8 +318,12 @@ class PreprocessorManager:
             }
             entities.append(file_entity)
             
-            # Apply code chunking
-            chunks = chunk_code(document)
+            # Apply code chunking (function may return str when output_format != 'python')
+            chunks_raw = chunk_code(document)
+            if isinstance(chunks_raw, str):
+                logger.warning("chunk_code returned string output; skipping entity extraction for %s", path)
+                return
+            chunks: List[Dict[str, Any]] = chunks_raw
             
             # Process each chunk into an entity
             for chunk in chunks:
@@ -400,7 +404,11 @@ class PreprocessorManager:
             entities.append(file_entity)
             
             # Apply text chunking
-            chunks = chunk_text(document)
+            chunks_raw = chunk_text(document)
+            if isinstance(chunks_raw, str):
+                logger.warning("chunk_text returned string output; skipping entity extraction for %s", path)
+                return
+            chunks: List[Dict[str, Any]] = chunks_raw
             
             # Process each chunk into an entity
             for chunk in chunks:

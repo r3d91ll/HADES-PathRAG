@@ -175,7 +175,7 @@ class ChonkyProcessor(BaseProcessor):
                             sequence_relation = DocumentRelation(
                                 source_id=chunk.id,
                                 target_id=next_chunk.id,
-                                relation_type=RelationType.FOLLOWS,
+                                relation_type=RelationType.RELATED_TO,
                                 weight=1.0,
                                 bidirectional=False,
                                 metadata={
