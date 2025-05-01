@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import patch, mock_open
 
 from src.types.common import PreProcessorConfig
-from src.ingest.processing.file_processor import FileProcessor
+from src.ingest.pre_processor.file_processor import FileProcessor
 
 
 class TestFileProcessorInit:

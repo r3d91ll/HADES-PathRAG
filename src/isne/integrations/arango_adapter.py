@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Any, Optional, Union, Tuple, cast
 from datetime import datetime
 
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.types.common import NodeID, EdgeID, NodeData, EdgeData, EmbeddingVector
 from src.isne.types.models import (
     IngestDocument, 

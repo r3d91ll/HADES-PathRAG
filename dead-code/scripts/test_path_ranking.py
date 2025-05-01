@@ -23,7 +23,7 @@ sys.path.append(str(project_root))
 
 from src.isne.path_ranking import PathRanker
 from src.isne.types.models import IngestDocument, DocumentRelation, RelationType
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.ingest.repository.arango_repository import ArangoRepository
 from src.isne.integrations.pathrag_connector import PathRAGConnector
 from src.isne.pipeline import ISNEPipeline, PipelineConfig

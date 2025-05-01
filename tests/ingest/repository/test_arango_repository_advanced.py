@@ -52,10 +52,10 @@ class TestArangoRepositoryErrorHandling:
         # Configure the mock to raise an exception
         mock_repo.connection.get_document.side_effect = Exception("Document not accessible")
         
-        # Test that the exception is properly handled and None is returned
+        # Test that the exception is properly handled and an empty dictionary is returned
         result = mock_repo.get_document("test1")
-        # Verify None is returned
-        assert result is None
+        # Verify an empty dictionary is returned
+        assert result == {}
     
     def test_edge_create_exception(self, mock_repo):
         """Test exception handling in create_edge method."""
@@ -81,7 +81,7 @@ class TestArangoRepositoryErrorHandling:
     def test_get_edges_exception(self, mock_repo):
         """Test exception handling in get_edges method."""
         # Configure the mock to raise an exception
-        mock_repo.connection.query.side_effect = Exception("Query execution failed")
+        mock_repo.connection.raw_db.aql.execute.side_effect = Exception("Query execution failed")
         
         # Test that the exception is properly logged and an empty list is returned
         with patch("logging.Logger.error") as mock_error:
@@ -97,7 +97,7 @@ class TestArangoRepositoryErrorHandling:
     def test_traverse_graph_exception(self, mock_repo):
         """Test exception handling in traverse_graph method."""
         # Configure the mock to raise an exception
-        mock_repo.connection.query.side_effect = Exception("Traversal failed")
+        mock_repo.connection.raw_db.aql.execute.side_effect = Exception("Traversal failed")
         
         # Test that the exception is properly handled and a dictionary with empty collections is returned
         result = mock_repo.traverse_graph("node1", max_depth=2)
@@ -110,7 +110,7 @@ class TestArangoRepositoryErrorHandling:
     def test_shortest_path_exception(self, mock_repo):
         """Test exception handling in shortest_path method."""
         # Configure the mock to raise an exception
-        mock_repo.connection.query.side_effect = Exception("Shortest path computation failed")
+        mock_repo.connection.raw_db.aql.execute.side_effect = Exception("Shortest path computation failed")
         
         # Test that the exception is properly handled and an empty list is returned
         result = mock_repo.shortest_path("node1", "node2")
@@ -263,7 +263,7 @@ class TestArangoRepositoryVectorAdvanced:
     def test_search_similar_exceptions(self, mock_repo):
         """Test exception handling in search_similar method."""
         # Configure the mock to raise an exception
-        mock_repo.connection.query.side_effect = Exception("Vector search failed")
+        mock_repo.connection.raw_db.aql.execute.side_effect = Exception("Vector search failed")
         
         # Test that the exception is properly logged and an empty list is returned
         with patch("logging.Logger.error") as mock_error:
@@ -279,7 +279,7 @@ class TestArangoRepositoryVectorAdvanced:
     def test_hybrid_search_exceptions(self, mock_repo):
         """Test exception handling in hybrid_search method."""
         # Configure the mock to raise an exception
-        mock_repo.connection.query.side_effect = Exception("Hybrid search failed")
+        mock_repo.connection.raw_db.aql.execute.side_effect = Exception("Hybrid search failed")
         
         # Test that the exception is properly logged and an empty list is returned
         with patch("logging.Logger.error") as mock_error:
@@ -324,68 +324,68 @@ class TestArangoRepositoryGraphAdvanced:
         """Test graph traversal with different depth parameters."""
         # Mock the cursor results
         mock_cursor = MagicMock()
-        mock_cursor.__iter__.return_value = [
+        mock_cursor.__iter__.return_value = iter([
             {"edge": {"_key": "e1", "type": "TEST_EDGE"}, "vertex": {"_key": "v1", "content": "Test"}}
-        ]
+        ])
         
         # Configure the mock connection to return our mock cursor
-        mock_repo.connection.query.return_value = mock_cursor
+        mock_repo.connection.raw_db.aql.execute.return_value = mock_cursor
         
         # Test with different depth values
         mock_repo.traverse_graph("start_node", max_depth=1)
-        depth1_query = mock_repo.connection.query.call_args[0][0]
-        depth1_vars = mock_repo.connection.query.call_args[0][1]
+        depth1_query = mock_repo.connection.raw_db.aql.execute.call_args[0][0]
+        depth1_vars = mock_repo.connection.raw_db.aql.execute.call_args[1]['bind_vars']
         assert "@max_depth" in depth1_query
         assert depth1_vars["max_depth"] == 1
         
         mock_repo.traverse_graph("start_node", max_depth=3)
-        depth3_vars = mock_repo.connection.query.call_args[0][1]
+        depth3_vars = mock_repo.connection.raw_db.aql.execute.call_args[1]['bind_vars']
         assert depth3_vars["max_depth"] == 3
     
     def test_get_edges_direction_variants(self, mock_repo):
         """Test get_edges with different direction parameters."""
         # Mock the cursor results
         mock_cursor = MagicMock()
-        mock_cursor.__iter__.return_value = [
+        mock_cursor.__iter__.return_value = iter([
             {"edge": {"_key": "e1", "type": "TEST_EDGE"}, "vertex": {"_key": "v1", "content": "Test"}}
-        ]
+        ])
         
         # Configure the mock connection to return our mock cursor
-        mock_repo.connection.query.return_value = mock_cursor
+        mock_repo.connection.raw_db.aql.execute.return_value = mock_cursor
         
         # Test outbound direction (default)
         mock_repo.get_edges("node1", direction="outbound")
-        outbound_query_args = mock_repo.connection.query.call_args[0][0]
+        outbound_query_args = mock_repo.connection.raw_db.aql.execute.call_args[0][0]
         assert "OUTBOUND" in outbound_query_args
         
         # Test inbound direction
         mock_repo.get_edges("node1", direction="inbound")
-        inbound_query_args = mock_repo.connection.query.call_args[0][0]
+        inbound_query_args = mock_repo.connection.raw_db.aql.execute.call_args[0][0]
         assert "INBOUND" in inbound_query_args
         
         # Test any direction
         mock_repo.get_edges("node1", direction="any")
-        any_query_args = mock_repo.connection.query.call_args[0][0]
+        any_query_args = mock_repo.connection.raw_db.aql.execute.call_args[0][0]
         assert "ANY" in any_query_args
     
     def test_get_edges_with_edge_type_filter(self, mock_repo):
         """Test get_edges with edge type filtering."""
         # Mock the cursor results
         mock_cursor = MagicMock()
-        mock_cursor.__iter__.return_value = [
+        mock_cursor.__iter__.return_value = iter([
             {"edge": {"_key": "e1", "type": "TEST_EDGE"}, "vertex": {"_key": "v1", "content": "Test"}}
-        ]
+        ])
         
         # Configure the mock connection to return our mock cursor
-        mock_repo.connection.query.return_value = mock_cursor
+        mock_repo.connection.raw_db.aql.execute.return_value = mock_cursor
         
         # Test with edge type filter
         edge_types = ["TEST_EDGE", "ANOTHER_EDGE"]
         mock_repo.get_edges("node1", edge_types=edge_types)
         
         # Verify the filter is properly included in the query
-        query_args = mock_repo.connection.query.call_args[0][0]
-        bind_vars = mock_repo.connection.query.call_args[0][1]
+        query_args = mock_repo.connection.raw_db.aql.execute.call_args[0][0]
+        bind_vars = mock_repo.connection.raw_db.aql.execute.call_args[1]['bind_vars']
         
         assert "FILTER" in query_args
         assert "edge_types" in bind_vars
@@ -422,7 +422,7 @@ class TestArangoRepositoryGraphAdvanced:
         mock_cursor.__iter__.return_value = []
         
         # Configure the mock connection to return our mock cursor
-        mock_repo.connection.query.return_value = mock_cursor
+        mock_repo.connection.raw_db.aql.execute.return_value = mock_cursor
         
         # Get most connected nodes
         nodes = mock_repo.get_most_connected_nodes(10)

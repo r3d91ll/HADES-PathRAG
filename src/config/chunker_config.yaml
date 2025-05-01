@@ -1,0 +1,34 @@
+# Configuration for content chunking in HADES-PathRAG
+# This file controls how different file types are chunked during the ingestion process
+# Two primary chunking systems are defined:
+# - AST-based chunking for code files (respects code structure)
+# - Chonky for semantic text chunking (natural language content)
+
+version: 1
+
+# Map languages/file types to appropriate chunker
+chunker_mapping:
+  python: 'ast'
+  javascript: 'ast'
+  java: 'ast'
+  cpp: 'ast'
+  markdown: 'chonky'
+  text: 'chonky'
+  html: 'chonky'
+  pdf: 'chonky'
+  default: 'chonky'  # Fallback chunker for unknown file types
+
+# AST-based code chunker configuration
+ast:
+  max_tokens: 2048        # Maximum tokens per chunk
+  use_class_boundaries: true    # Respect class boundaries
+  use_function_boundaries: true # Respect function boundaries
+  extract_imports: true         # Create separate chunk for imports
+  preserve_docstrings: true     # Keep docstrings with their symbol
+
+# Chonky semantic text chunker configuration
+chonky:
+  max_tokens: 2048        # Maximum tokens per chunk
+  overlap_tokens: 200     # Token overlap between chunks
+  semantic_chunking: true      # Use semantic chunking vs. static
+  preserve_structure: true     # Attempt to preserve document structure

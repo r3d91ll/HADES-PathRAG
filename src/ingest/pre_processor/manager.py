@@ -5,6 +5,7 @@ This module provides a type-safe manager to coordinate preprocessing for differe
 delegating to appropriate preprocessors based on file extension and configuration.
 """
 
+import hashlib
 import logging
 from typing import Dict, List, Any, Optional, Union, Set, cast, TypedDict
 from pathlib import Path
@@ -13,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.types.common import PreProcessorConfig
 from src.ingest.pre_processor import get_pre_processor
 from src.ingest.pre_processor.base_pre_processor import BasePreProcessor
+from src.ingest.chunking import chunk_code, chunk_text
+from src.config.chunker_config import get_chunker_for_language
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -197,23 +200,23 @@ class PreprocessorManager:
         # Get the appropriate preprocessor
         preprocessor = self.get_preprocessor(file_type)
         if not preprocessor:
-            logger.warning(f"No preprocessor available for file: {path_obj}")
+            logger.warning(f"No preprocessor available for {file_path} with type {file_type}")
             return None
         
+        # Preprocess the file
         try:
-            # Preprocess the file
             result = preprocessor.process_file(str(path_obj))
             return result
         except Exception as e:
-            logger.error(f"Error preprocessing file {path_obj}: {e}")
+            logger.error(f"Error preprocessing {file_path}: {e}")
             return None
     
     def preprocess_batch(self, files_by_type: Dict[str, List[Path]]) -> Dict[str, List[PreprocessingResult]]:
         """
-        Preprocess a batch of files.
+        Preprocess a batch of files organized by file type.
         
         Args:
-            files_by_type: Dictionary mapping file types to lists of file paths
+            files_by_type: Dictionary mapping file types to lists of files
             
         Returns:
             Dictionary mapping file types to lists of preprocessing results
@@ -222,22 +225,17 @@ class PreprocessorManager:
         
         # Process each file type
         for file_type, files in files_by_type.items():
-            # Skip if no files
-            if not files:
-                continue
-                
+            results[file_type] = []
+            
             # Get the appropriate preprocessor
             preprocessor = self.get_preprocessor(file_type)
             if not preprocessor:
                 logger.warning(f"No preprocessor available for file type: {file_type}")
                 continue
             
-            # Initialize results list for this file type
-            results[file_type] = []
-            
             # Process files in parallel
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all file processing tasks
+                # Submit all tasks
                 future_to_file = {
                     executor.submit(self.preprocess_file, file_path, file_type): file_path
                     for file_path in files
@@ -259,6 +257,9 @@ class PreprocessorManager:
         """
         Extract entities and relationships from preprocessing results.
         
+        For code files (Python, etc.), this applies AST-based chunking to split files
+        into semantic units with appropriate relationships.
+        
         Args:
             preprocessing_results: Dictionary mapping file types to lists of preprocessing results
             
@@ -271,15 +272,202 @@ class PreprocessorManager:
         # Process each file type's results
         for file_type, results_list in preprocessing_results.items():
             for result in results_list:
-                # Extract entities
-                if 'entities' in result and isinstance(result['entities'], list):
-                    entities.extend(result['entities'])
+                # Check if this is a code file that needs chunking
+                language = result.get('type') or result.get('language') or file_type
+                chunker_type = get_chunker_for_language(language)
                 
-                # Extract relationships
-                if 'relationships' in result and isinstance(result['relationships'], list):
-                    relationships.extend(result['relationships'])
+                if chunker_type == 'ast' and language.lower() in ['python']:
+                    # AST-based chunking for code files
+                    self._process_code_file(result, entities, relationships)
+                elif chunker_type == 'chonky' and language.lower() in ['markdown', 'text', 'markdown']:
+                    # Text-based chunking for text files
+                    self._process_text_file(result, entities, relationships)
+                else:
+                    # Standard processing for other file types
+                    self._process_standard_file(result, entities, relationships)
         
         return {
             'entities': entities,
             'relationships': relationships
         }
+        
+    def _process_code_file(self, document: Dict[str, Any], 
+                          entities: List[Dict[str, Any]], 
+                          relationships: List[Dict[str, Any]]) -> None:
+        """
+        Process a code file using AST-based chunking.
+        
+        Args:
+            document: Pre-processed code document
+            entities: List to add entity nodes to
+            relationships: List to add relationship edges to
+        """
+        try:
+            # Create a document-level entity (the file itself)
+            path = document.get('path', 'unknown')
+            file_name = Path(path).name
+            doc_id = f"doc:{hashlib.md5(path.encode()).hexdigest()[:8]}"
+            
+            file_entity = {
+                'id': doc_id,
+                'name': file_name,
+                'path': path,
+                'type': document.get('type', 'python'),
+                'content_type': 'file',
+                'metadata': document.get('metadata', {})
+            }
+            entities.append(file_entity)
+            
+            # Apply code chunking
+            chunks = chunk_code(document)
+            
+            # Process each chunk into an entity
+            for chunk in chunks:
+                chunk_id = chunk['id']
+                
+                # Create entity node for this chunk
+                chunk_entity = {
+                    'id': chunk_id,
+                    'name': chunk.get('name', f"Chunk {chunk_id}"),
+                    'path': path,
+                    'type': chunk.get('type', 'code'),
+                    'content': chunk.get('content', ''),
+                    'content_type': 'chunk',
+                    'symbol_type': chunk.get('symbol_type', 'code'),
+                    'line_start': chunk.get('line_start', 0),
+                    'line_end': chunk.get('line_end', 0),
+                    'metadata': {
+                        'source_file': path,
+                        'symbol_type': chunk.get('symbol_type', ''),
+                        'parent': chunk.get('parent')
+                    }
+                }
+                entities.append(chunk_entity)
+                
+                # Create file -> chunk relationship
+                contains_rel = {
+                    'from': doc_id,
+                    'to': chunk_id,
+                    'type': 'CONTAINS',
+                    'metadata': {
+                        'source_file': path
+                    }
+                }
+                relationships.append(contains_rel)
+                
+                # Create parent -> child relationship if applicable
+                parent_id = chunk.get('parent')
+                if parent_id:
+                    parent_rel = {
+                        'from': parent_id,
+                        'to': chunk_id,
+                        'type': 'CONTAINS',
+                        'metadata': {
+                            'source_file': path
+                        }
+                    }
+                    relationships.append(parent_rel)
+            
+            logger.info(f"Processed code file {path} into {len(chunks)} chunks")
+        except Exception as e:
+            logger.error(f"Error processing code file {document.get('path', 'unknown')}: {e}")
+    
+    def _process_text_file(self, document: Dict[str, Any], 
+                          entities: List[Dict[str, Any]], 
+                          relationships: List[Dict[str, Any]]) -> None:
+        """
+        Process a text file using text-based chunking.
+        
+        Args:
+            document: Pre-processed text document
+            entities: List to add entity nodes to
+            relationships: List to add relationship edges to
+        """
+        try:
+            # Create a document-level entity (the file itself)
+            path = document.get('path', 'unknown')
+            file_name = Path(path).name
+            doc_id = f"doc:{hashlib.md5(path.encode()).hexdigest()[:8]}"
+            
+            file_entity = {
+                'id': doc_id,
+                'name': file_name,
+                'path': path,
+                'type': document.get('type', 'text'),
+                'content_type': 'file',
+                'metadata': document.get('metadata', {})
+            }
+            entities.append(file_entity)
+            
+            # Apply text chunking
+            chunks = chunk_text(document)
+            
+            # Process each chunk into an entity
+            for chunk in chunks:
+                chunk_id = chunk['id']
+                
+                # Create entity node for this chunk
+                chunk_entity = {
+                    'id': chunk_id,
+                    'name': chunk.get('name', f"Chunk {chunk_id}"),
+                    'path': path,
+                    'type': chunk.get('type', 'text'),
+                    'content': chunk.get('content', ''),
+                    'content_type': 'chunk',
+                    'symbol_type': chunk.get('symbol_type', 'text'),
+                    'line_start': chunk.get('line_start', 0),
+                    'line_end': chunk.get('line_end', 0),
+                    'metadata': {
+                        'source_file': path,
+                        'symbol_type': chunk.get('symbol_type', ''),
+                        'parent': chunk.get('parent')
+                    }
+                }
+                entities.append(chunk_entity)
+                
+                # Create file -> chunk relationship
+                contains_rel = {
+                    'from': doc_id,
+                    'to': chunk_id,
+                    'type': 'CONTAINS',
+                    'metadata': {
+                        'source_file': path
+                    }
+                }
+                relationships.append(contains_rel)
+                
+                # Create parent -> child relationship if applicable
+                parent_id = chunk.get('parent')
+                if parent_id:
+                    parent_rel = {
+                        'from': parent_id,
+                        'to': chunk_id,
+                        'type': 'CONTAINS',
+                        'metadata': {
+                            'source_file': path
+                        }
+                    }
+                    relationships.append(parent_rel)
+            
+            logger.info(f"Processed text file {path} into {len(chunks)} chunks")
+        except Exception as e:
+            logger.error(f"Error processing text file {document.get('path', 'unknown')}: {e}")
+    
+    def _process_standard_file(self, document: Dict[str, Any], 
+                              entities: List[Dict[str, Any]], 
+                              relationships: List[Dict[str, Any]]) -> None:
+        """
+        Process a non-code file using standard entity/relationship extraction.
+        
+        Args:
+            document: Pre-processed document
+            entities: List to add entity nodes to
+            relationships: List to add relationship edges to
+        """
+        # Add pre-existing entities if available
+        if 'entities' in document and isinstance(document['entities'], list):
+            entities.extend(document['entities'])
+        
+        # Add pre-existing relationships if available
+        if 'relationships' in document and isinstance(document['relationships'], list):
+            relationships.extend(document['relationships'])

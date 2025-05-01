@@ -17,8 +17,13 @@ from src.ingest.orchestrator.ingestor import RepositoryIngestor
 class TestRepositoryIngestorInit:
     """Test the initialization of the RepositoryIngestor class."""
 
-    def test_init_with_defaults(self):
+    @patch('src.ingest.orchestrator.ingestor.ArangoConnection')
+    def test_init_with_defaults(self, mock_conn_cls):
         """Test initialization with default parameters."""
+        # Mock the bootstrap method
+        mock_conn = MagicMock()
+        mock_conn_cls.bootstrap.return_value = mock_conn
+        
         # Initialize with no configs
         ingestor = RepositoryIngestor()
         
@@ -53,7 +58,7 @@ class TestRepositoryIngestorInit:
         # Create standalone mocks for this test
         mock_conn = MagicMock()
         mock_repo = MagicMock()
-        mock_conn_cls.return_value = mock_conn
+        mock_conn_cls.bootstrap.return_value = mock_conn
         mock_repo_cls.return_value = mock_repo
         
         # Create the ingestor with a dict copy of sample_storage_config
@@ -61,11 +66,11 @@ class TestRepositoryIngestorInit:
         ingestor = RepositoryIngestor(storage_config=config_dict)
         
         # Verify connection was initialized with correct params
-        mock_conn_cls.assert_called_once()
-        args, kwargs = mock_conn_cls.call_args
-        assert kwargs['db_name'] == config_dict.get('database')
+        mock_conn_cls.bootstrap.assert_called_once()
+        args, kwargs = mock_conn_cls.bootstrap.call_args
+        assert kwargs['config']['database'] == config_dict.get('database')
         # Host might be modified with port in constructor, so just verify it contains the base host
-        assert config_dict.get('host') in kwargs['host']
+        assert config_dict.get('host') in kwargs['config']['host']
         
         # Verify repository was initialized with connection
         mock_repo_cls.assert_called_once()
@@ -234,8 +239,8 @@ class TestRepositoryIngestorErrors:
     @patch('src.ingest.orchestrator.ingestor.ArangoConnection')
     def test_repository_initialization_error(self, mock_conn_cls, sample_storage_config):
         """Test error handling during repository initialization."""
-        # Mock connection to raise exception
-        mock_conn_cls.side_effect = Exception("Connection failed")
+        # Mock bootstrap to raise exception
+        mock_conn_cls.bootstrap.side_effect = Exception("Connection failed")
         
         # Initialization should raise the error
         with pytest.raises(Exception) as exc_info:

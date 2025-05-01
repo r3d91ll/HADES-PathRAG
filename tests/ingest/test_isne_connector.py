@@ -13,7 +13,7 @@ import numpy as np
 
 from src.ingest.isne_connector import ISNEIngestorConnector
 from src.ingest.orchestrator.ingestor import RepositoryIngestor
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.isne.pipeline import ISNEPipeline, PipelineConfig
 from src.isne.types.models import (
     IngestDocument,

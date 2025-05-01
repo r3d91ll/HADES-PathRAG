@@ -14,7 +14,7 @@ from datetime import datetime
 import uuid
 
 from src.ingest.orchestrator.ingestor import RepositoryIngestor
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.types.common import EmbeddingVector
 
 from src.isne.types.models import (

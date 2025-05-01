@@ -17,7 +17,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from arango import ArangoClient
-from src.db.arango_connection import get_client, ArangoConnection
+from src.storage.arango.connection import get_client, ArangoConnection
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

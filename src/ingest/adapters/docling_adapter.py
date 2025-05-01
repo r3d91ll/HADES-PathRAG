@@ -7,11 +7,21 @@ from typing import Any, Dict, Optional, List, Union
 from pathlib import Path
 
 try:
-    from docling.document_converter import DocumentConverter  # type: ignore[import-not-found]
-    from docling.datamodel.base_models import InputFormat  # type: ignore[import-not-found]
+    from docling.document_converter import DocumentConverter
+    from docling.datamodel.base_models import InputFormat
+    DOCLING_AVAILABLE = True
 except ImportError:
-    DocumentConverter = None
-    InputFormat = None
+    DOCLING_AVAILABLE = False
+    # Define placeholder types for type checking
+    class DocumentConverter:  # type: ignore
+        """Placeholder for DocumentConverter when docling is not available."""
+        def convert(self, file_path: Union[str, Path], **kwargs: Any) -> Any:
+            """Placeholder convert method."""
+            raise ImportError("Docling is not installed")
+        
+    class InputFormat:  # type: ignore
+        """Placeholder for InputFormat when docling is not available."""
+        pass
 
 class DoclingAdapter:
     """
@@ -40,16 +50,50 @@ class DoclingAdapter:
         file_path = Path(file_path)
         # Infer input format if possible
         input_format = self._infer_format(file_path)
-        result = self.converter.convert(str(file_path), input_format=input_format)
+        # Convert the document
+        converter = DocumentConverter()
+        
+        # Only attempt format handling if docling is available
+        if DOCLING_AVAILABLE:
+            # Try to use input_format if the API supports it
+            try:
+                if hasattr(InputFormat, 'AUTO'):
+                    format_value = None
+                    if not input_format:
+                        if hasattr(InputFormat, 'AUTO'):
+                            format_value = getattr(InputFormat, 'AUTO')
+                    else:
+                        format_value = getattr(InputFormat, input_format.upper(), getattr(InputFormat, 'AUTO', None))
+                    
+                    # Only pass input_format if we have a valid format
+                    if format_value is not None:
+                        # Use a try/except block to handle potential API differences
+                        try:
+                            # Use **kwargs to avoid type errors with input_format
+                            kwargs = {"input_format": format_value}
+                            result = converter.convert(file_path, **kwargs)
+                        except TypeError:
+                            # Fallback if input_format is not a valid parameter
+                            result = converter.convert(file_path)
+                    else:
+                        result = converter.convert(file_path)
+                else:
+                    result = converter.convert(file_path)
+            except (AttributeError, TypeError):
+                # Fallback if the API doesn't match our expectations
+                result = converter.convert(file_path)
+        else:
+            # Simple fallback when docling isn't available
+            result = converter.convert(file_path)
         doc = result.document
         return {
             "source": str(file_path),
             "content": doc.export_to_markdown(),
             "docling_document": doc,
-            "format": getattr(input_format, "name", None) if input_format else None
+            "format": input_format if isinstance(input_format, str) else None
         }
 
-    def analyze_text(self, text: str) -> Any:
+    def analyze_text(self, text: str) -> Dict[str, Any]:
         """
         Analyze text using Docling.
         
@@ -134,19 +178,21 @@ class DoclingAdapter:
         # This is a placeholder implementation to satisfy the interface
         return [{"keyword": "placeholder_keyword", "score": 0.95}]
         
-    def _infer_format(self, file_path: Path) -> Optional[Any]:
+    def _infer_format(self, file_path: Path) -> Optional[str]:
         """
         Infer the input format for Docling based on file extension.
         """
         ext = file_path.suffix.lower()
-        if InputFormat is None:
+        if not DOCLING_AVAILABLE:
             return None
         if ext == ".pdf":
-            return getattr(InputFormat, "PDF", None)
+            return "PDF"
         if ext in {".html", ".htm"}:
-            return getattr(InputFormat, "HTML", None)
+            return "HTML"
         if ext == ".md":
-            return getattr(InputFormat, "MARKDOWN", None)
-        if ext == ".docx":
-            return getattr(InputFormat, "DOCX", None)
+            return "MARKDOWN"
+        if ext in {".docx", ".doc"}:
+            return "DOCX"
+        if ext == ".txt":
+            return "TEXT"
         return None

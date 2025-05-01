@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from src.types.common import PreProcessorConfig
-from src.ingest.processing.preprocessor_manager import PreprocessorManager
+from src.ingest.pre_processor.manager import PreprocessorManager
 from src.ingest.pre_processor.base_pre_processor import BasePreProcessor
 
 
@@ -33,7 +33,7 @@ class TestPreprocessorManagerInit:
             file_type_map={"py": ["python"], "md": ["markdown"]}
         )
         
-        with patch('src.ingest.processing.preprocessor_manager.get_pre_processor') as mock_get_processor:
+        with patch('src.ingest.pre_processor.manager.get_pre_processor') as mock_get_processor:
             # Mock the pre-processor factory
             mock_python = MagicMock()
             mock_md = MagicMock()
@@ -58,7 +58,7 @@ class TestPreprocessorManagerMapping:
     @pytest.fixture
     def manager_with_mocks(self):
         """Create a PreprocessorManager with mocked preprocessors."""
-        with patch('src.ingest.processing.preprocessor_manager.get_pre_processor') as mock_get_processor:
+        with patch('src.ingest.pre_processor.manager.get_pre_processor') as mock_get_processor:
             # Create mock preprocessors
             mock_python = MagicMock(spec=BasePreProcessor)
             mock_md = MagicMock(spec=BasePreProcessor)
@@ -114,7 +114,7 @@ class TestPreprocessorManagerMapping:
         assert manager.preprocessors['jsx'] == mocks['python']
         
         # Map to unknown preprocessor, falls back to creating it
-        with patch('src.ingest.processing.preprocessor_manager.get_pre_processor') as mock_get_processor:
+        with patch('src.ingest.pre_processor.manager.get_pre_processor') as mock_get_processor:
             mock_new = MagicMock()
             mock_get_processor.return_value = mock_new
             
@@ -124,7 +124,7 @@ class TestPreprocessorManagerMapping:
             assert manager.preprocessors['ts'] == mock_new
             
         # Map to unknown preprocessor that fails to create
-        with patch('src.ingest.processing.preprocessor_manager.get_pre_processor') as mock_get_processor:
+        with patch('src.ingest.pre_processor.manager.get_pre_processor') as mock_get_processor:
             mock_get_processor.return_value = None
             
             result = manager._map_extension('unknown', 'nonexistent')
@@ -142,7 +142,7 @@ class TestPreprocessorManagerMapping:
             }
         )
         
-        with patch('src.ingest.processing.preprocessor_manager.get_pre_processor') as mock_get_processor, \
+        with patch('src.ingest.pre_processor.manager.get_pre_processor') as mock_get_processor, \
              patch.object(PreprocessorManager, '_map_extension') as mock_map:
             
             # Mock behavior
@@ -165,7 +165,7 @@ class TestPreprocessorManagerProcessing:
     @pytest.fixture
     def manager_with_processors(self):
         """Create a PreprocessorManager with real but minimal preprocessors."""
-        with patch('src.ingest.processing.preprocessor_manager.get_pre_processor') as mock_get_processor:
+        with patch('src.ingest.pre_processor.manager.get_pre_processor') as mock_get_processor:
             # Create simple preprocessor mocks that return predictable results
             class MockPyProcessor:
                 def preprocess(self, file_path):

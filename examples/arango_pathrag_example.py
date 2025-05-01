@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import PathRAG components
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.xnx.arango_adapter import ArangoPathRAGAdapter
 
 # Optional: Import Ollama for embeddings if needed

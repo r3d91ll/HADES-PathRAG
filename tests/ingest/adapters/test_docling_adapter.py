@@ -90,7 +90,7 @@ class TestDoclingAdapter:
         assert result["source"] == str(file_path)
         assert result["content"] == "# Mock Markdown Document"
         assert result["docling_document"] is not None
-        assert result["format"] == "pdf"
+        assert result["format"] == "PDF"
     
     def test_parse_with_str_path(self, adapter):
         """Test parse method with string file path."""
@@ -208,14 +208,14 @@ class TestDoclingAdapter:
         
         result = adapter._infer_format(file_path)
         
-        assert result == MockInputFormat.PDF
+        assert result == "PDF"
     
     def test_infer_format_html(self, mock_imports):
         """Test _infer_format with HTML files."""
         adapter = DoclingAdapter()
         
-        assert adapter._infer_format(Path("document.html")) == MockInputFormat.HTML
-        assert adapter._infer_format(Path("document.htm")) == MockInputFormat.HTML
+        assert adapter._infer_format(Path("document.html")) == "HTML"
+        assert adapter._infer_format(Path("document.htm")) == "HTML"
     
     def test_infer_format_markdown(self, mock_imports):
         """Test _infer_format with Markdown file."""
@@ -224,7 +224,7 @@ class TestDoclingAdapter:
         
         result = adapter._infer_format(file_path)
         
-        assert result == MockInputFormat.MARKDOWN
+        assert result == "MARKDOWN"
     
     def test_infer_format_docx(self, mock_imports):
         """Test _infer_format with DOCX file."""
@@ -233,7 +233,7 @@ class TestDoclingAdapter:
         
         result = adapter._infer_format(file_path)
         
-        assert result == MockInputFormat.DOCX
+        assert result == "DOCX"
     
     def test_infer_format_unknown(self, mock_imports):
         """Test _infer_format with unknown file type."""
@@ -247,7 +247,7 @@ class TestDoclingAdapter:
     def test_infer_format_no_input_format(self):
         """Test _infer_format when InputFormat is None."""
         with patch("src.ingest.adapters.docling_adapter.DocumentConverter", MockDocumentConverter), \
-             patch("src.ingest.adapters.docling_adapter.InputFormat", None):
+             patch("src.ingest.adapters.docling_adapter.DOCLING_AVAILABLE", False):
             adapter = DoclingAdapter()
             file_path = Path("document.pdf")
             

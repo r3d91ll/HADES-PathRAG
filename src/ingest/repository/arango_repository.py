@@ -7,14 +7,14 @@ and vector operations in a unified way.
 """
 
 import logging
-from typing import Dict, List, Any, Optional, Union, cast, MutableMapping, Sequence, Tuple
+from typing import Dict, List, Any, Optional, Union, cast, MutableMapping, Sequence, Tuple, Iterator
 from datetime import datetime
 import numpy as np
 from arango.exceptions import DocumentInsertError, DocumentUpdateError, DocumentDeleteError, AQLQueryExecuteError
 from arango.cursor import Cursor
 
 from src.types.common import NodeData, EdgeData, EmbeddingVector, NodeID, EdgeID
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from .repository_interfaces import UnifiedRepository
 
 # Set up logging
@@ -99,23 +99,37 @@ class ArangoRepository(UnifiedRepository):
             collection_name: Name of the collection
         """
         # Create full-text index on 'content' field
-        self.connection.db.collection(collection_name).add_fulltext_index(
+        self.connection.raw_db.collection(collection_name).add_fulltext_index(
             fields=["content"], min_length=3
         )
         
         # Create hash index on 'type' field for fast filtering
-        self.connection.db.collection(collection_name).add_hash_index(
+        self.connection.raw_db.collection(collection_name).add_hash_index(
             fields=["type"], unique=False
         )
         
         # If ArangoDB version supports vector indexes, create one for embeddings
         try:
-            self.connection.db.collection(collection_name).add_persistent_index(
+            self.connection.raw_db.collection(collection_name).add_persistent_index(
                 fields=["embedding"], unique=False
             )
         except Exception as e:
             logger.warning(f"Could not create index on embedding field: {e}")
             
+    def create_indexes(self) -> bool:
+        """
+        Create necessary indexes on the node collection.
+        
+        Returns:
+            bool: True if indexes were created successfully, False otherwise
+        """
+        try:
+            self._create_indexes(self.node_collection_name)
+            return True
+        except Exception as e:
+            logger.error(f"Error creating indexes: {e}")
+            return False
+    
     # Document Repository Implementation
     
     def store_document(self, document: NodeData) -> NodeID:
@@ -157,10 +171,11 @@ class ArangoRepository(UnifiedRepository):
             bind_vars: Dict[str, Any] = {"@collection": self.node_collection_name, "key": str(document_id)}
             
             # Execute query
-            cursor = self.connection.query(query, bind_vars)
+            cursor = self.connection.raw_db.aql.execute(query, bind_vars=bind_vars)
             
             # Process results
-            doc = next(iter(cursor), None)
+            cursor_iter = cast(Iterator[Dict[str, Any]], cursor)
+            doc = next(cursor_iter, None)
             
             if doc is None:
                 return None
@@ -195,7 +210,7 @@ class ArangoRepository(UnifiedRepository):
             }
             
             # Execute query
-            result = self.connection.query(query, bind_vars)
+            result = self.connection.raw_db.aql.execute(query, bind_vars=bind_vars)
             
             return True
         except Exception as e:
@@ -239,10 +254,11 @@ class ArangoRepository(UnifiedRepository):
             bind_vars["@collection"] = self.node_collection_name
             
             # Execute the query
-            cursor = self.connection.query(aql_query, bind_vars)
+            cursor = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Convert results to NodeData
-            return [self._convert_to_node_data(doc) for doc in cursor]
+            cursor_iter = cast(Iterator[Dict[str, Any]], cursor)
+            return [self._convert_to_node_data(doc) for doc in cursor_iter]
             
         except Exception as e:
             logger.error(f"Error searching documents: {e}")
@@ -330,10 +346,13 @@ class ArangoRepository(UnifiedRepository):
         
         try:
             # Insert edge into collection
-            result = self.connection.insert_edge(self.edge_collection_name, edge_data)
+            # Use raw_db to insert edge directly into the collection
+            edge_collection = self.connection.raw_db.collection(self.edge_collection_name)
+            result = edge_collection.insert(edge_data)
             
             # Return the edge key as the ID
-            return EdgeID(result["_key"] if "_key" in result else result["_id"].split('/')[-1])
+            result_dict = cast(Dict[str, Any], result)
+            return EdgeID(result_dict["_key"] if "_key" in result_dict else result_dict["_id"].split('/')[-1])
         except Exception as e:
             logger.error(f"Error creating edge: {e}")
             raise
@@ -389,12 +408,12 @@ class ArangoRepository(UnifiedRepository):
             bind_vars["graph_name"] = self.graph_name
             
             # Execute the query
-            cursor = self.connection.query(aql_query, bind_vars)
+            cursor = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Process results
             result: List[Tuple[EdgeData, NodeData]] = []
-            if cursor and isinstance(cursor, Cursor): # type: ignore[unreachable]
-                for item in cursor: # type: ignore[unreachable]
+            cursor_iter = cast(Iterator[Dict[str, Any]], cursor)
+            for item in cursor_iter:
                     edge_data = self._convert_to_edge_data(item["edge"])
                     node_data = self._convert_to_node_data(item["vertex"])
                     result.append((edge_data, node_data))
@@ -453,13 +472,14 @@ class ArangoRepository(UnifiedRepository):
             bind_vars["graph_name"] = self.graph_name
             
             # Execute traversal query
-            results = self.connection.query(aql_query, bind_vars)
+            results = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Process results
             result: Dict[str, Any] = {"vertices": [], "edges": [], "paths": []}
             
             # Extract traversal data from results
-            traversal_data = next(iter(results), None)
+            results_iter = cast(Iterator[Dict[str, Any]], results)
+            traversal_data = next(results_iter, None)
             if traversal_data:
                 result["vertices"] = [self._convert_to_node_data(v) for v in traversal_data.get("vertices", [])]
                 result["edges"] = [self._convert_to_edge_data(e) for e in traversal_data.get("edges", [])]
@@ -506,7 +526,7 @@ class ArangoRepository(UnifiedRepository):
             """
             
             # Execute query
-            cursor = self.connection.db.aql.execute(aql_query, bind_vars=bind_vars)
+            cursor = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Process and return results
             path = []
@@ -717,12 +737,12 @@ class ArangoRepository(UnifiedRepository):
             bind_vars["@collection"] = self.node_collection_name
             
             # Execute the query
-            cursor = self.connection.query(aql_query, bind_vars)
+            cursor = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Process results
             results: List[Tuple[NodeData, float]] = []
-            if cursor and isinstance(cursor, Cursor): # type: ignore[unreachable]
-                for item in cursor: # type: ignore[unreachable]
+            cursor_iter = cast(Iterator[Dict[str, Any]], cursor)
+            for item in cursor_iter:
                     node_data = self._convert_to_node_data(item["document"])
                     score = item["score"]
                     results.append((node_data, score))
@@ -791,12 +811,12 @@ class ArangoRepository(UnifiedRepository):
             bind_vars["@collection"] = self.node_collection_name
             
             # Execute the query
-            cursor = self.connection.query(aql_query, bind_vars)
+            cursor = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Process results
             results: List[Tuple[NodeData, float]] = []
-            if cursor and isinstance(cursor, Cursor): # type: ignore[unreachable]
-                for item in cursor: # type: ignore[unreachable]
+            cursor_iter = cast(Iterator[Dict[str, Any]], cursor)
+            for item in cursor_iter:
                     node_data = self._convert_to_node_data(item["document"])
                     score = item["score"]
                     results.append((node_data, score))
@@ -821,27 +841,26 @@ class ArangoRepository(UnifiedRepository):
         """
         try:
             # Get most connected nodes
-            top_nodes_cursor = self.connection.query(
-                """
-                FOR d IN @@nodes
-                    LET links = LENGTH(
-                        FOR l IN @@edges
-                            FILTER l._from == d._id OR l._to == d._id
-                            RETURN 1
-                    )
-                    SORT links DESC
-                    LIMIT @limit
-                    RETURN { "key": d._key, "links": links }
-                """,
-                bind_vars={"limit": limit, "@nodes": self.node_collection_name, "@edges": self.edge_collection_name}
-            )
+            aql_query = """
+            FOR d IN @@nodes
+                LET links = LENGTH(
+                    FOR l IN @@edges
+                        FILTER l._from == d._id OR l._to == d._id
+                        RETURN 1
+                )
+                SORT links DESC
+                LIMIT @limit
+                RETURN { "key": d._key, "links": links }
+            """
+            bind_vars = cast(MutableMapping[str, Any], {"limit": limit, "@nodes": self.node_collection_name, "@edges": self.edge_collection_name})
+            cursor = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Compile top nodes
             top_nodes_stats: Dict[str, int] = {}
-            if top_nodes_cursor:
-                for node_obj in top_nodes_cursor:
-                    if isinstance(node_obj, dict) and "key" in node_obj and "links" in node_obj:
-                        top_nodes_stats[str(node_obj["key"])] = int(node_obj["links"])
+            cursor_iter = cast(Iterator[Dict[str, Any]], cursor)
+            for node_obj in cursor_iter:
+                if isinstance(node_obj, dict) and "key" in node_obj and "links" in node_obj:
+                    top_nodes_stats[str(node_obj["key"])] = int(node_obj["links"])
             
             return top_nodes_stats
         except Exception as e:
@@ -857,13 +876,13 @@ class ArangoRepository(UnifiedRepository):
         """
         try:
             # Query for any document with a non-null embedding field using AQL
-            cursor = self.connection.query(
-                "FOR d IN @@nodes FILTER d.embedding != null LIMIT 1 RETURN true",
-                {"@nodes": self.node_collection_name}
-            )
+            aql_query = "FOR d IN @@nodes FILTER d.embedding != null LIMIT 1 RETURN true"
+            bind_vars = cast(MutableMapping[str, Any], {"@nodes": self.node_collection_name})
+            cursor = self.connection.raw_db.aql.execute(aql_query, bind_vars=bind_vars)
             
             # Check cursor for results
-            return bool(cursor and len(cursor) > 0)
+            cursor_iter = cast(Iterator[bool], cursor)
+            return any(cursor_iter)
         except Exception as e:
             logger.error(f"Error checking for document vectors: {e}")
             return False
@@ -882,14 +901,16 @@ class ArangoRepository(UnifiedRepository):
             node_stats_query = f"""
             RETURN LENGTH(@@collection)
             """
-            node_stats_result = self.connection.query(node_stats_query, {"@collection": self.node_collection_name})
-            node_count = next(iter(node_stats_result), 0)
+            node_stats_result = self.connection.raw_db.aql.execute(node_stats_query, bind_vars={"@collection": self.node_collection_name})
+            node_result_iter = cast(Iterator[int], node_stats_result)
+            node_count = next(node_result_iter, 0)
             
             edge_stats_query = f"""
             RETURN LENGTH(@@collection)
             """
-            edge_stats_result = self.connection.query(edge_stats_query, {"@collection": self.edge_collection_name})
-            edge_count = next(iter(edge_stats_result), 0)
+            edge_stats_result = self.connection.raw_db.aql.execute(edge_stats_query, bind_vars={"@collection": self.edge_collection_name})
+            edge_result_iter = cast(Iterator[int], edge_stats_result)
+            edge_count = next(edge_result_iter, 0)
             
             # Create stats dictionaries
             node_stats = {"count": node_count}
@@ -918,7 +939,7 @@ class ArangoRepository(UnifiedRepository):
                     LIMIT 1
                     RETURN 1
                 """
-                self.connection.query(vector_test_query, {"@collection": self.node_collection_name})
+                self.connection.raw_db.aql.execute(vector_test_query, bind_vars={"@collection": self.node_collection_name})
                 stats["has_vector_index"] = True
             except Exception:
                 stats["has_vector_index"] = False

@@ -16,7 +16,8 @@ from pprint import pprint
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
+from src.types.common import StorageConfig
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -29,14 +30,15 @@ def display_database_info(db_name: str):
     Args:
         db_name: Name of the database to connect to
     """
-    # Connect to the database
-    conn = ArangoConnection(db_name=db_name)
+    # Connect to the database and bootstrap it
+    storage_config = StorageConfig({"database": db_name})
+    conn = ArangoConnection.bootstrap(config=storage_config)
     
     print(f"\n=== Database '{db_name}' Info ===")
     
     # List collections
     try:
-        collections = conn.db.collections()
+        collections = conn.raw_db.collections()
         
         print(f"\n== Collections ==")
         for collection in collections:
@@ -44,7 +46,7 @@ def display_database_info(db_name: str):
             
             # Check collection type - we need to get the collection and check its type
             try:
-                coll = conn.db.collection(coll_name)
+                coll = conn.raw_db.collection(coll_name)
                 coll_type = "Edge" if coll.type == 3 else "Document"  # ArangoDB uses type 3 for edge collections
             except Exception:
                 coll_type = "Unknown"
@@ -52,12 +54,12 @@ def display_database_info(db_name: str):
             
             # Get collection statistics
             if not collection['name'].startswith('_'):  # Skip system collections
-                count = conn.db.collection(coll_name).count()
+                count = conn.raw_db.collection(coll_name).count()
                 print(f"   Documents: {count}")
         
         # List graphs
         print(f"\n== Graphs ==")
-        graphs = conn.db.graphs()
+        graphs = conn.raw_db.graphs()
         if not graphs:
             print("No graphs found")
         else:
@@ -84,8 +86,8 @@ def display_database_info(db_name: str):
                 continue
                 
             try:
-                coll = conn.db.collection(collection['name'])
-                if coll.type == 3:  # Edge collection
+                coll = conn.raw_db.collection(collection['name'])
+                if hasattr(coll, 'is_edge') and coll.is_edge():  # Modern way to check edge collections
                     edge_collections.append(collection)
                 else:  # Document collection
                     doc_collections.append(collection)
@@ -100,7 +102,7 @@ def display_database_info(db_name: str):
                 
                 # Get 3 sample documents
                 query = f"FOR doc IN {coll_name} LIMIT 3 RETURN doc"
-                cursor = conn.query(query)
+                cursor = conn.raw_db.aql.execute(query, count=True)
                 if cursor:
                     for i, doc in enumerate(cursor):
                         print(f"\nDocument {i+1}:")
@@ -124,7 +126,7 @@ def display_database_info(db_name: str):
                 
                 # Get 3 sample edges
                 query = f"FOR edge IN {coll_name} LIMIT 3 RETURN edge"
-                cursor = conn.query(query)
+                cursor = conn.raw_db.aql.execute(query, count=True)
                 if cursor:
                     for i, edge in enumerate(cursor):
                         print(f"\nEdge {i+1}:")

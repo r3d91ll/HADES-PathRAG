@@ -44,7 +44,7 @@ class BasePreProcessor(ABC):
         self.errors: List[ProcessError] = []
     
     @abstractmethod
-    def process_file(self, file_path: str) -> Dict[str, Any]:
+    def process_file(self, file_path: str) -> Optional[Dict[str, Any]]:
         """
         Process a single file.
         
@@ -80,7 +80,10 @@ class BasePreProcessor(ABC):
                     
                 # Process the file
                 processed = self.process_file(file_path)
-                results.append(processed)
+                if processed is not None:
+                    results.append(processed)
+                else:
+                    logger.warning(f"Skipping file due to preprocessing failure: {file_path}")
                 logger.info(f"Successfully processed: {file_path}")
                 
             except Exception as e:

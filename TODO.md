@@ -1,6 +1,6 @@
 # HADES-PathRAG Project TODO List
 
-## 🚨 Priority Tasks (April 2025) - Updated: April 24th
+## 🚨 Priority Tasks (May 2025) - Updated: April 29th
 
 ### Project Setup & Environment
 
@@ -94,6 +94,114 @@
 - [ ] Implement comprehensive error handling
 - [ ] Add authentication mechanism
 - [ ] Create client library for API interaction
+
+### 🔧 Infrastructure Hardening & Logging (May 2025)
+
+- [x] **ArangoDB Collection & Key Sanitisation**
+  - Context: Ensure collection names and `_key` values meet ArangoDB naming rules to prevent ingestion failures and enable CLI recreate/append modes.
+  - Deliverables:
+    - ✅ `src/storage/arango/utils.py` with `safe_name` and `safe_key`
+    - ✅ Unit tests in `tests/storage/test_utils.py`
+    - ✅ Integration into `ArangoStorage` creation and insert logic
+  - Acceptance Criteria:
+    - ✅ Ingestion pipeline creates collections/documents with arbitrary names without errors.
+
+- [x] **Ingestion Pipeline Test Hardening**
+  - Context: Ensure all ingestion pipeline components have robust tests with high coverage, especially after ArangoDB API refactoring.
+  - Deliverables:
+    - ✅ Updated all repository tests to use new type-safe ArangoDB API
+    - ✅ Fixed cursor mocking and parameter extraction in tests
+    - ✅ Ensured proper error handling and type safety in tests
+    - ✅ Verified high test coverage (93% for repository code)
+  - Acceptance Criteria:
+    - ✅ All 179 ingestion pipeline tests pass
+    - ✅ Repository code has >90% test coverage
+    - ✅ Tests properly use the new type-safe API
+
+- [x] **Type Safety Improvements**
+  - Context: Fix type errors in the ingestion pipeline to ensure robust type checking with mypy.
+  - Deliverables:
+    - ✅ Fixed type errors in docling_adapter.py and docling_pre_processor.py
+    - ✅ Improved handling of optional dependencies with proper type annotations
+    - ✅ Added proper type annotations for BeautifulSoup elements
+    - ✅ Updated tests to match implementation changes
+  - Acceptance Criteria:
+    - ✅ All ingestion pipeline files pass mypy type checking
+    - ✅ All 179 ingestion pipeline tests pass
+    - ✅ Optional dependencies are properly handled with graceful degradation
+
+- [ ] **Sharding & Indexing Strategy**
+  - Context: Current collections lack optimal shard keys and indexes, causing potential performance bottlenecks for large graphs.
+  - Deliverables:
+    - Config-driven shard/index parameters
+    - Automatic index creation (`symbol_path`, embeddings, etc.)
+    - Query profiling script `scripts/profile_queries.py`
+  - Acceptance Criteria:
+    - Explain plans show use of defined indexes; ingestion throughput improves (baseline-to-target KPI TBD).
+
+- [ ] **Robust Logging & Error Handling**
+  - Context: Missing structured logs and retries make debugging ingestion difficult.
+  - Deliverables:
+    - `src/utils/logging.py` using `structlog`
+    - Replace `print`/bare `except` with structured logs
+    - `tenacity` retry decorator for DB writes/network I/O
+  - Acceptance Criteria:
+    - Errors surface with stack traces & context; transient errors auto-retry.
+
+- [x] **Arango Connection Refactor**
+  - Context: Replace legacy `src.db.arango_connection` with typed `src.storage.arango.connection`.
+  - Deliverables:
+    - New connection wrapper (done)
+    - Update all imports, delete `src/db`
+    - Ensure tests pass after migration
+  - Acceptance Criteria:
+    - `grep -R "src.db.arango_connection"` returns no results in src/ (done - only references in dead-code/)
+
+- [✅] **AST-Based Code Chunker**
+  - Context: Deterministic chunking for source code to complement Chonky (semantic text chunker).
+  - Deliverables:
+    - ✅ Created `src/ingest/chunking/code_chunkers/ast_chunker.py` with `chunk_python_code()`
+    - ✅ Created `src/ingest/chunking/code_chunkers/__init__.py` with language dispatcher  
+    - ✅ Added `src/config/chunker_config.py` and YAML for configurable chunking
+    - ✅ Integrated chunker with `PreprocessorManager.extract_entities_and_relationships()`
+    - ✅ Moved `PreprocessorManager` from `processing/` to `pre_processor/manager.py` for better organization
+    - ✅ Created basic integration test in `tests/test_ast_chunker.py`
+    - ✅ Moved chunker implementation to `src/ingest/chunking/code_chunkers` and deprecated `src/ingest/processing`
+    - ✅ Updated all imports & tests to new package
+    - [ ] Phase-out compatibility shim once downstream code updated
+  - Acceptance Criteria:
+    - Large functions/classes split into ≤ 2048-token chunks; pipeline ingests Python repo successfully.
+
+- [-] **Chonky-Based Text Chunker**
+  - Context: Handle markdown / plain-text files with semantic paragraph splitting.
+  - Deliverables:
+    - Implement `chunk_text()` in `src/ingest/chunking/text_chunkers/chonky_chunker.py`
+    - Extend dispatcher in `chunking/__init__.py` for `markdown` & `text`
+    - Unit/integration tests using sample docs
+  - Acceptance Criteria:
+    - Non-code docs are split into ≤ 2048-token chunks and ingested without errors.
+
+- [-] **Embedding Layer Refactor**
+  - Context: Separate embedding concerns into `src/ingest/embedding/`.
+  - Deliverables:
+    - ISNE façade function (`embed_graph_with_isne`) implemented (done)
+    - Flag in orchestrator to run graph embeddings automatically
+    - Future sub-modules for text/vector store embeddings
+  - Acceptance Criteria:
+    - Orchestrator can run end-to-end ingestion + ISNE embedding with single flag.
+
+### CLI Tools Reorganization
+
+- [x] **CLI Tools Reorganization**
+  - Context: Reorganize scripts into proper CLI structure with consistent interfaces
+  - Deliverables:
+    - ✅ Core implementation in `src/cli/` modules
+    - ✅ Simple executable scripts in `scripts/pathrag-*`
+    - ✅ Type-safe interfaces with proper error handling
+    - ✅ Consistent parameter naming across tools
+  - Acceptance Criteria:
+    - ✅ All CLI tools pass mypy type checking
+    - ✅ CLI tools support explicit collection management modes
 
 ## ✅ Completed Tasks
 
@@ -216,4 +324,4 @@
 - Project environment setup is stable but test infrastructure needs improvement
 - XnX notation has been moved to experimental features while core functionality is prioritized
 
-Last updated: April 27, 2025
+Last updated: April 29, 2025

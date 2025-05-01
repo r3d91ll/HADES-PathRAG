@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Import our modules
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.ingest.repository.arango_repository import ArangoRepository
 from scripts.ingest_documentation import create_documentation_config, ingest_documentation
 from scripts.query_documentation import query_documentation

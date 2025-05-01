@@ -11,6 +11,8 @@ The modular architecture supports multiple file types including:
 - (More file types will be added)
 """
 
+from typing import Type, Dict
+
 # Import configuration
 from src.ingest.pre_processor.config_models import PreProcessorConfig
 from src.ingest.pre_processor.config import (
@@ -20,12 +22,12 @@ from src.ingest.pre_processor.config import (
 )
 
 # Import pre-processor components
-from src.ingest.pre_processor.base_pre_processor import BasePreProcessor
-from src.ingest.pre_processor.python_pre_processor import PythonPreProcessor
-from src.ingest.pre_processor.docling_pre_processor import DoclingPreProcessor
+from .base_pre_processor import BasePreProcessor
+from .python_pre_processor import PythonPreProcessor
+from .file_processor import FileProcessor
+from .docling_pre_processor import DoclingPreProcessor
 
-from typing import Type, Dict
-# Registry of pre-processors by file type
+# Registry of pre-processors by file type - declare before manager import
 PRE_PROCESSOR_REGISTRY: Dict[str, Type[BasePreProcessor]] = {
     'python': PythonPreProcessor,
     'markdown': DoclingPreProcessor,
@@ -51,9 +53,18 @@ def get_pre_processor(file_type: str) -> BasePreProcessor:
         raise ValueError(f"No pre-processor available for file type: {file_type}")
     return pre_processor_class()
 
+# Import manager after defining get_pre_processor to avoid circular imports
+from .manager import PreprocessorManager
+
+# Re-export chunking helpers so callers can still import via pre_processor
+from src.ingest.chunking import chunk_code, chunk_text
+
 __all__ = [
     # Configuration
     "PreProcessorConfig",
+    # Chunking functions
+    "chunk_code",
+    "chunk_text",
     "load_config",
     "save_config",
     "get_default_config",
@@ -61,7 +72,10 @@ __all__ = [
     # Pre-processor interface and implementations
     "BasePreProcessor",
     "PythonPreProcessor",
-    "MarkdownPreProcessor",
+    "FileProcessor",
+    "PreprocessorManager",
+    # Chunking
+    "chunk_code",
     "get_pre_processor",
     "PRE_PROCESSOR_REGISTRY"
 ]

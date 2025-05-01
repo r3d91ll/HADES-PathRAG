@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import ArangoDB connection utilities
-from src.db.arango_connection import get_client, ArangoConnection
+from src.storage.arango.connection import get_client, ArangoConnection
 
 # Databases that might exist and need to be reset
 PATHRAG_DBS = ['hades', 'pathrag_demo']

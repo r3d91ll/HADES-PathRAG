@@ -11,11 +11,24 @@ from urllib.parse import urlparse
 
 # Attempt to import BeautifulSoup for HTML parsing
 try:
-    from bs4 import BeautifulSoup  # type: ignore[import-not-found]
+    from bs4 import BeautifulSoup, Tag, NavigableString, PageElement
+    from typing import cast
     _BS4_AVAILABLE = True
 except ImportError:
     _BS4_AVAILABLE = False
     from html.parser import HTMLParser  # Fallback minimal parser
+    # Define placeholders for type checking
+    class Tag:  # type: ignore
+        """Placeholder for bs4.Tag when bs4 is not available."""
+        pass
+        
+    class NavigableString:  # type: ignore
+        """Placeholder for bs4.NavigableString when bs4 is not available."""
+        pass
+        
+    class PageElement:  # type: ignore
+        """Placeholder for bs4.PageElement when bs4 is not available."""
+        pass
 
 from src.ingest.adapters.docling_adapter import DoclingAdapter
 from .base_pre_processor import BasePreProcessor
@@ -135,7 +148,12 @@ class DoclingPreProcessor(BasePreProcessor):
                     soup = BeautifulSoup(content, "html.parser")
                     links = soup.find_all('a', href=True)
                     for a_tag in links:
-                        href: str = a_tag['href']
+                        # Cast to Tag to ensure type safety
+                        tag = cast(Tag, a_tag)
+                        # Use get method which is safer for type checking
+                        href = tag.get('href', '')
+                        if not isinstance(href, str):
+                            href = str(href)
                         # Skip empty or purely internal anchors
                         if not href or href.startswith('#'):
                             continue

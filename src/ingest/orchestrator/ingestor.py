@@ -16,11 +16,11 @@ from src.types.common import (
     IngestStats, PreProcessorConfig, NodeData,
     EdgeData, EmbeddingVector, StorageConfig
 )
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.ingest.repository.repository_interfaces import UnifiedRepository
 from src.ingest.repository.arango_repository import ArangoRepository
-from src.ingest.processing.file_processor import FileProcessor
-from src.ingest.processing.preprocessor_manager import PreprocessorManager
+from src.ingest.pre_processor.file_processor import FileProcessor
+from src.ingest.pre_processor.manager import PreprocessorManager
 from src.isne.processors.base_processor import ProcessorConfig
 from src.isne.processors.embedding_processor import EmbeddingProcessor
 from src.isne.types.models import EmbeddingConfig
@@ -95,11 +95,19 @@ class RepositoryIngestor:
             graph_name = f"{collection_prefix}pathrag" if collection_prefix else "pathrag"
             
             # Connect to ArangoDB
-            self.connection = ArangoConnection(
-                db_name=database,
-                host=host,
-                username=username,
-                password=password
+            arango_config = StorageConfig({
+                'database': database,
+                'host': f"http://{host}",
+                'username': username,
+                'password': password
+            })
+            
+            # Use bootstrap to ensure the database exists
+            self.connection = ArangoConnection.bootstrap(
+                config=arango_config,
+                node_collection=node_collection,
+                edge_collection=edge_collection,
+                graph_name=graph_name
             )
             
             # Create repository

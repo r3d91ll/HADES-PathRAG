@@ -36,7 +36,7 @@ class PythonPreProcessor(BasePreProcessor):
         self.create_symbol_table: bool = create_symbol_table
         logger.info(f"Initialized PythonPreProcessor with create_symbol_table={create_symbol_table}")
     
-    def process_file(self, file_path: str) -> Dict[str, Any]:
+    def process_file(self, file_path: str) -> Optional[Dict[str, Any]]:
         """
         Process a Python file, extracting:
         - AST nodes (functions, classes, imports)
@@ -68,19 +68,11 @@ class PythonPreProcessor(BasePreProcessor):
             tree = ast.parse(content)
             module_docstring = ast.get_docstring(tree)
         except SyntaxError as e:
-            logger.error(f"Syntax error in {file_path}: {e}")
-            # Return minimal document with error flag
-            return {
-                'path': file_path,
-                'id': doc_id,
-                'type': 'python',
-                'error': str(e),
-                'content': content[:1000],  # First 1000 chars
-                'metadata': {
-                    'error_type': 'syntax_error',
-                    'processsed_with': 'PythonPreProcessor'
-                }
-            }
+            # Log and skip malformed files entirely
+            logger.error(
+                "Syntax error while parsing %s: %s – file will be skipped", file_path, e
+            )
+            return None
             
         # Extract functions, classes, and imports
         functions = self._extract_functions(tree)

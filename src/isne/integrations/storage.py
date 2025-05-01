@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple, Union, cast
 from datetime import datetime
 
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.isne.types.models import (
     IngestDocument,
     IngestDataset,

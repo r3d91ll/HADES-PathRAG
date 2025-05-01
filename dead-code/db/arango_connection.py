@@ -40,6 +40,7 @@ from arango import ArangoClient, AQLQueryExecuteError
 from arango.collection import StandardCollection
 from arango.database import StandardDatabase
 from arango.exceptions import ServerConnectionError
+from src.storage.arango.utils import safe_name, safe_key
 
 # Try to load environment variables from .env file if available
 try:
@@ -480,7 +481,7 @@ class ArangoConnection:
         Returns:
             True if the collection exists, False otherwise
         """
-        return self.db.has_collection(collection_name)
+        return self.db.has_collection(safe_name(collection_name))
     
     def create_collection(self, collection_name: str) -> StandardCollection:
         """
@@ -492,12 +493,13 @@ class ArangoConnection:
         Returns:
             StandardCollection instance
         """
-        if not self.collection_exists(collection_name):
-            logger.info(f"Creating collection '{collection_name}'")
-            return self.db.create_collection(collection_name)
+        coll_name = safe_name(collection_name)
+        if not self.collection_exists(coll_name):
+            logger.info(f"Creating collection '{coll_name}'")
+            return self.db.create_collection(coll_name)
         else:
-            logger.info(f"Collection '{collection_name}' already exists")
-            return self.db.collection(collection_name)
+            logger.info(f"Collection '{coll_name}' already exists")
+            return self.db.collection(coll_name)
     
     def create_edge_collection(self, collection_name: str) -> StandardCollection:
         """
@@ -509,12 +511,13 @@ class ArangoConnection:
         Returns:
             StandardCollection instance
         """
-        if not self.collection_exists(collection_name):
-            logger.info(f"Creating edge collection '{collection_name}'")
-            return self.db.create_collection(collection_name, edge=True)
+        coll_name = safe_name(collection_name)
+        if not self.collection_exists(coll_name):
+            logger.info(f"Creating edge collection '{coll_name}'")
+            return self.db.create_collection(coll_name, edge=True)
         else:
-            logger.info(f"Edge collection '{collection_name}' already exists")
-            return self.db.collection(collection_name)
+            logger.info(f"Edge collection '{coll_name}' already exists")
+            return self.db.collection(coll_name)
     
     def graph_exists(self, graph_name: str) -> bool:
         """
@@ -559,7 +562,13 @@ class ArangoConnection:
         Returns:
             Result of the insert operation
         """
-        collection = self.db.collection(collection_name)
+        coll_name = safe_name(collection_name)
+        collection = self.db.collection(coll_name)
+        
+        # Sanitize _key if present
+        if "_key" in document:
+            document["_key"] = safe_key(str(document["_key"]))
+        
         try:
             if overwrite:
                 return collection.insert(document, overwrite=True)
@@ -617,10 +626,11 @@ class ArangoConnection:
         Returns:
             True if the collection was deleted, False if it didn't exist
         """
-        if self.collection_exists(collection_name):
+        coll_name = safe_name(collection_name)
+        if self.collection_exists(coll_name):
             try:
-                logger.info(f"Deleting collection '{collection_name}'")
-                self.db.delete_collection(collection_name)
+                logger.info(f"Deleting collection '{coll_name}'")
+                self.db.delete_collection(coll_name)
                 return True
             except Exception as e:
                 logger.error(f"Error deleting collection: {e}")

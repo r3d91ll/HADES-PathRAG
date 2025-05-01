@@ -12,10 +12,10 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from src.types.common import StorageConfig, PreProcessorConfig, NodeData, EdgeData
-from src.db.arango_connection import ArangoConnection
+from src.storage.arango.connection import ArangoConnection
 from src.ingest.repository.arango_repository import ArangoRepository
-from src.ingest.processing.file_processor import FileProcessor
-from src.ingest.processing.preprocessor_manager import PreprocessorManager
+from src.ingest.pre_processor.file_processor import FileProcessor
+from src.ingest.pre_processor.manager import PreprocessorManager
 from src.isne.processors.embedding_processor import EmbeddingProcessor
 
 
