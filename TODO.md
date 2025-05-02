@@ -92,6 +92,12 @@
 
 - [x] Implement `.symbol_table` directory structure for source code metadata
 - [x] Create comprehensive documentation for ingestion system
+- [x] Refactor document ingestion pipeline with format-aware adapters
+  - [x] Replace legacy pre-processor logic with new docproc module adapters
+  - [x] Create robust adapter layer for backward compatibility
+  - [x] Implement format-aware processing for multiple file types (PDF, HTML, code, etc.)
+  - [x] Update tests with proper mocking and fixtures
+  - [x] Fix type errors in pre-processor module
 - [ ] Integrate pre-processor with main ingestion pipeline
   - [x] Ensure compatibility with Chonky implementation
   - [x] Prioritize text content processing with Chonky
