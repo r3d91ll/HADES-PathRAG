@@ -79,6 +79,8 @@
   - [x] Implemented type-safe file operations utilities
   - [x] Built a comprehensive API with proper typing
   - [x] Created centralized types module for the pre-processor
+  - [x] Fixed type errors in pre-processor registry with Union types
+  - [x] Properly type-annotated adapter factory functions
 - [x] Update ISNE pipeline with proper types
   - [x] Created comprehensive type-safe data models with dataclasses
   - [x] Implemented neural network layers with proper tensor typing
@@ -86,6 +88,9 @@
   - [x] Added processors with strict typing (chunking, embedding, graph)
   - [x] Created a fully typed pipeline orchestration interface
 - [ ] Fix integration points with consistent type definitions
+  - [x] Fixed PreprocessorManager typed interface
+  - [x] Ensured proper typing for adapter pattern classes
+  - [ ] Fix remaining docproc adapter type errors (csv, json, html adapters)
 - [ ] Add mypy configuration and pre-commit hooks
 
 ### Code Pre-Processing Pipeline

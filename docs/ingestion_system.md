@@ -12,7 +12,7 @@ This document describes the comprehensive ingestion system for HADES-PathRAG, co
    - [Storage Phase](#4-storage-phase)
 2. [Incremental Update Process](#incremental-update-process)
    - [Change Detection Strategies](#change-detection-strategies)
-   - [Updating Components](#updating-different-components)
+   - [Updating Components](#updating-components)
    - [Cascading Update Analysis](#cascading-update-analysis)
    - [Special Cases](#handling-special-cases)
 3. [Implementation Details](#implementation-details)
@@ -42,7 +42,7 @@ The HADES-PathRAG ingestion pipeline consists of **five** main phases:
 | # | Phase / Component | Purpose | Key Classes |
 |---|-------------------|---------|-------------|
 | 1 | Load files | Produce `IngestDocument` + optional relationships | `TextDirectoryLoader`, other loaders |
-| 2 | **ChonkyProcessor** | Split **text** docs into semantic paragraphs using `mirth/chonky_modernbert_large_1`<br>_No embeddings are produced here._ | `isne.processors.chonking_processor.ChonkyProcessor` |
+| 2 | **ChonkyProcessor** | Split **text** docs into semantic paragraphs using `mirth/chonky_modernbert_large_1`<br/>_No embeddings are produced here._ | `isne.processors.chonking_processor.ChonkyProcessor` |
 | 2a | Code chunking | Split **code** docs via symbol tables | `HybridChunkingProcessor` |
 | 3 | **EmbeddingProcessor** | Call vLLM-served `BAAI/bge-large-en-v1.5` to embed **all** documents & chunks | `isne.processors.embedding_processor.EmbeddingProcessor` |
 | 4 | Graph build | Convert explicit & inferred relations into a graph | `GraphProcessor` |
@@ -350,7 +350,7 @@ graph TD
     C & D & E --> F[Update Dependent Symbols]
 ```
 
-## Updating Different Components
+## Updating Components
 
 ### 1. Updating Document Nodes
 
@@ -548,9 +548,64 @@ This section provides specific implementation details for the key components of 
 
 ## Pre-Processors
 
+### Document Processing Module
+
+The core document processing functionality has been refactored into a standalone `src/docproc` module that provides format-aware processing for multiple file types. This module serves as the foundation for all pre-processors through an adapter pattern.
+
+```mermaid
+graph TD
+    A[Pre-Processor Registry] --> B[DocProcAdapter]
+    A --> C[PythonPreProcessor]
+    B --> D[docproc Module]
+    D --> E[Format Detection]
+    D --> F[Format-Specific Adapters]
+    F --> G[PDF Adapter]
+    F --> H[HTML Adapter]
+    F --> I[Code Adapter]
+    F --> J[JSON/YAML/XML/CSV Adapters]
+```
+
+Key features of the document processing module:
+
+- **Format-aware processing**: Each adapter understands the specific structure of its target format
+- **Unified interface**: Common methods across all adapters
+- **Extensibility**: Easy to add support for new formats
+- **Error handling**: Robust error handling with detailed context
+- **Type safety**: Comprehensive type annotations
+
+See the dedicated [Document Processing Module](./docproc.md) documentation for detailed information.
+
+### DocProcAdapter
+
+The `DocProcAdapter` class in `src/ingest/pre_processor/base_pre_processor.py` provides a bridge between the new document processing module and the legacy pre-processor interface:
+
+```python
+class DocProcAdapter(BasePreProcessor):
+    """Adapter for the docproc module that implements the BasePreProcessor interface."""
+    
+    def __init__(self, format_override: Optional[str] = None):
+        super().__init__()
+        self.format_override = format_override
+        self.errors = {}
+    
+    def process_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
+        """Process a file using the docproc module."""
+        try:
+            # Convert to string if it's a Path object
+            file_path_str = str(file_path)
+            
+            # Process the file using docproc
+            result = process_document(file_path_str, format_override=self.format_override)
+            return result
+        except Exception as e:
+            # Record the error and re-raise
+            self.errors[str(file_path)] = str(e)
+            raise
+```
+
 ### Python Pre-Processor
 
-The Python pre-processor is implemented in `src/ingest/pre_processor/python_pre_processor.py` and provides:
+The Python pre-processor is implemented in `src/ingest/pre_processor/python_pre_processor.py` and provides specialized handling for Python code files:
 
 - AST-based parsing for accurate code structure extraction
 - Symbol table generation for code-aware chunking
@@ -598,6 +653,24 @@ class PythonPreProcessor(BasePreProcessor):
             document["metadata"]["symbol_table_path"] = str(symbol_table_path)
             
         return document
+```
+
+### Website & PDF Pre-Processors
+
+The `WebsitePreProcessor` and `PDFPreProcessor` classes now use the `DocProcAdapter` to leverage the advanced capabilities of the document processing module:
+
+```python
+class WebsitePreProcessor(DocProcAdapter):
+    """Pre-processor for HTML/website content using the docproc module."""
+    
+    def __init__(self):
+        super().__init__(format_override="html")
+
+class PDFPreProcessor(DocProcAdapter):
+    """Pre-processor for PDF documents using the docproc module."""
+    
+    def __init__(self):
+        super().__init__(format_override="pdf")
 ```
 
 ### Docling Pre-Processor
