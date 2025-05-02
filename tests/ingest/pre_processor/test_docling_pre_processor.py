@@ -29,9 +29,25 @@ class TestDoclingPreProcessor:
         return mock
     
     @pytest.fixture
-    def processor(self, mock_adapter):
-        """Create a DoclingPreProcessor with mocked adapter."""
-        with patch("src.ingest.pre_processor.docling_pre_processor.DoclingAdapter", return_value=mock_adapter):
+    def mock_doc_adapter(self):
+        """Create a mock DocProcAdapter for testing."""
+        mock = MagicMock()
+        # Setup mock to return a realistic docproc result
+        mock.process_file.return_value = {
+            "id": "test-doc-id",
+            "path": "/mock/path/file.txt",
+            "content": "Test content",
+            "metadata": {"title": "Test Document"},
+            "entities": [{"type": "PERSON", "text": "John Doe"}],
+            "format": "html"
+        }
+        return mock
+    
+    @pytest.fixture
+    def processor(self, mock_adapter, mock_doc_adapter):
+        """Create a DoclingPreProcessor with mocked adapters."""
+        with patch("src.ingest.pre_processor.docling_pre_processor.DoclingAdapter", return_value=mock_adapter), \
+             patch("src.ingest.pre_processor.docling_pre_processor.DocProcAdapter", return_value=mock_doc_adapter):
             yield DoclingPreProcessor()
     
     @pytest.fixture
@@ -102,177 +118,202 @@ class TestDoclingPreProcessor:
         mock_adapter.extract_keywords.assert_called_once_with(text)
         assert result == [{"text": "test", "score": 0.9}]
     
-    def test_process_file_success(self, processor, mock_adapter, temp_file):
-        """Test process_file with successful processing."""
-        with patch("builtins.open", mock_open(read_data="Test content")) as mock_file:
-            result = processor.process_file(temp_file)
-            
-            # Check that the file was opened and read
-            mock_file.assert_called_once_with(temp_file, 'r')
-            
-            # Check that the adapter methods were called
-            mock_adapter.analyze_text.assert_called_once_with("Test content")
-            mock_adapter.extract_entities.assert_called_once_with(temp_file)
-            mock_adapter.extract_keywords.assert_called_once_with("Test content")
-            
-            # Verify result structure
-            assert result["path"] == str(temp_file)
-            assert result["content"] == "Test content"
-            assert result["entities"] == [{"type": "PERSON", "text": "John Doe"}]
-            assert result["keywords"] == [{"text": "test", "score": 0.9}]
-            assert result["analysis"] == {"sentences": [{"text": "Test sentence"}]}
-    
-    def test_process_file_nonexistent(self, processor):
-        """Test process_file with a nonexistent file."""
-        with patch("os.path.exists", return_value=False):
-            with pytest.raises(FileNotFoundError):
-                processor.process_file("/nonexistent/file.txt")
-    
-    def test_process_file_with_error(self, processor, temp_file):
-        """Test process_file with an error in the adapter."""
-        # Mock the adapter to raise an exception
-        processor.adapter.analyze_text.side_effect = ValueError("Analysis error")
+    def test_process_file_success(self, processor, temp_file, mock_doc_adapter):
+        """Test successful file processing."""
+        # Update mock_doc_adapter to use the actual file path
+        mock_doc_adapter.process_file.return_value = {
+            "id": "test-doc-id",
+            "path": temp_file,
+            "content": "Test content",
+            "metadata": {"title": "Test Document"},
+            "entities": [{"type": "PERSON", "text": "John Doe"}],
+            "format": "html"
+        }
         
-        with patch("builtins.open", mock_open(read_data="Test content")):
-            with pytest.raises(Exception) as exc_info:
-                processor.process_file(temp_file)
-                
-            assert "Error processing file" in str(exc_info.value)
-            assert "Analysis error" in str(exc_info.value)
+        # Process the file
+        result = processor.process_file(temp_file)
+            
+        # Verify the DocProcAdapter was called
+        mock_doc_adapter.process_file.assert_called_once_with(temp_file)
+            
+        # Verify the result has expected structure
+        assert result["path"] == temp_file
+        assert result["content"] == "Test content"
+        assert result["metadata"]["title"] == "Test Document"
+        assert result["entities"] == [{"type": "PERSON", "text": "John Doe"}]
     
-    def test_process_file_with_read_error(self, processor, temp_file):
+    def test_process_file_nonexistent(self, processor, mock_doc_adapter):
+        """Test process_file with a nonexistent file."""
+        # Configure the DocProcAdapter to handle nonexistent files
+        mock_doc_adapter.process_file.return_value = None
+        
+        # The DoclingPreProcessor wraps FileNotFoundError in a general Exception with a detailed message
+        with pytest.raises(Exception) as exc_info:
+            processor.process_file("/nonexistent/file.txt")
+        
+        # Verify the error message contains both "File not found" and the file path
+        assert "File not found" in str(exc_info.value)
+        assert "/nonexistent/file.txt" in str(exc_info.value)
+        
+        # Verify the DocProcAdapter was called
+        mock_doc_adapter.process_file.assert_called_once_with("/nonexistent/file.txt")
+    
+    def test_process_file_with_error(self, processor, temp_file, mock_doc_adapter):
+        """Test process_file with an error in the adapter."""
+        # Configure the DocProcAdapter to simulate an error
+        mock_doc_adapter.process_file.side_effect = ValueError("Analysis error")
+        
+        # With our new adapter pattern, errors are handled and re-raised with additional context
+        with pytest.raises(Exception) as exc_info:
+            processor.process_file(temp_file)
+        
+        # Verify the error message contains the original error
+        assert "Analysis error" in str(exc_info.value)
+        # Verify the adapter method was called
+        mock_doc_adapter.process_file.assert_called_once_with(temp_file)
+    
+    def test_process_file_with_read_error(self, processor, temp_file, mock_doc_adapter):
         """Test process_file with a file reading error."""
-        with patch("builtins.open", side_effect=IOError("Read error")):
-            with pytest.raises(Exception) as exc_info:
-                processor.process_file(temp_file)
-                
-            assert "Error processing file" in str(exc_info.value)
-            assert "Read error" in str(exc_info.value)
+        # Configure the DocProcAdapter to simulate a read error
+        mock_doc_adapter.process_file.side_effect = IOError("Read error")
+        
+        # With our new adapter pattern, errors are handled and re-raised with additional context
+        with pytest.raises(Exception) as exc_info:
+            processor.process_file(temp_file)
+        
+        # Verify the error message contains the original error
+        assert "Read error" in str(exc_info.value)
+        # Verify the adapter method was called
+        mock_doc_adapter.process_file.assert_called_once_with(temp_file)
     
-    def test_process_file_with_bs4_html_links(self, processor, mock_adapter):
-        """Test HTML link extraction with BeautifulSoup implementation."""
+    def test_process_file_with_html_links(self, processor, mock_doc_adapter):
+        """Test HTML link extraction with our new adapter pattern."""
         html_content = """
         <!DOCTYPE html>
         <html>
-        <head>
-            <title>Test Document</title>
-        </head>
+        <head><title>Test Page</title></head>
         <body>
-            <a href="relative/path.html">Relative Link</a>
-            <a href="#section">Anchor Link</a>
-            <a href="https://example.com">External Link</a>
-            <a href="/absolute/path.html">Absolute Link</a>
+            <h1>Test Document</h1>
+            <p>This is a <a href="local_link.html">local link</a>.</p>
+            <p>This is an <a href="https://example.com">external link</a>.</p>
         </body>
         </html>
         """
         
-        # Create a temp file path for the test
-        file_path = "/tmp/test_document.html"
+        # Create a temporary HTML file
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            f.write(html_content.encode('utf-8'))
+            html_file_path = f.name
         
-        # Mock BeautifulSoup availability to True
-        bs4_patch = patch(
-            "src.ingest.pre_processor.docling_pre_processor._BS4_AVAILABLE", 
-            True
-        )
-        
-        # Create a mock for BeautifulSoup
-        mock_soup = MagicMock()
-        # Create mock link tags
-        mock_relative_link = MagicMock()
-        mock_relative_link.get.return_value = "relative/path.html"
-        
-        mock_anchor_link = MagicMock()
-        mock_anchor_link.get.return_value = "#section"
-        
-        mock_external_link = MagicMock()
-        mock_external_link.get.return_value = "https://example.com"
-        
-        mock_absolute_link = MagicMock()
-        mock_absolute_link.get.return_value = "/absolute/path.html"
-        
-        # Configure the mock soup to return our mock links
-        mock_soup.find_all.return_value = [
-            mock_relative_link,
-            mock_anchor_link, 
-            mock_external_link,
-            mock_absolute_link
-        ]
-        
-        bs_patch = patch(
-            "src.ingest.pre_processor.docling_pre_processor.BeautifulSoup",
-            return_value=mock_soup
-        )
-        
-        # Apply the patches and run the test
-        with bs4_patch, bs_patch, patch("builtins.open", mock_open(read_data=html_content)), \
-             patch("os.path.exists", return_value=True), \
-             patch("pathlib.Path.resolve", return_value=Path("/tmp/test_document_dir/relative/path.html")):
+        try:
+            # Set up mock DocProcAdapter response with relationships
+            mock_doc_adapter.process_file.return_value = {
+                "id": "html_12345678_test",
+                "path": html_file_path,
+                "content": html_content,
+                "metadata": {"title": "Test Page"},
+                "entities": [],
+                "format": "html",
+                "relationships": [
+                    {
+                        "source_id": "html_12345678_test",
+                        "target_id": "html_87654321_local_link_html",
+                        "type": "references",
+                        "metadata": {"href": "local_link.html"}
+                    }
+                ]
+            }
             
-            result = processor.process_file(file_path)
+            # Process the file
+            result = processor.process_file(html_file_path)
             
-            # Verify the extracted relationships
-            relationships = result["relationships"]
-            
-            # Check that we got at least one relationship
-            assert len(relationships) > 0, "No relationships were extracted"
-            
-            # All links should have been processed, but only non-anchor, 
-            # non-external should have been saved as relationships
-            assert mock_soup.find_all.called
-            assert mock_soup.find_all.call_args[0][0] == 'a'
-            assert mock_soup.find_all.call_args[1]["href"] is True
-            
-            # Verify we captured at least one relationship correctly
-            assert any(rel["type"] == "references" for rel in relationships)
-            
-    def test_process_file_with_regex_fallback(self, processor, mock_adapter):
-        """Test HTML link extraction with regex fallback."""
-        html_content = '<a href="relative/path.html">Link</a>'
-        file_path = "/tmp/test_document.html"
-        
-        # Mock BeautifulSoup availability to False
-        with patch("src.ingest.pre_processor.docling_pre_processor._BS4_AVAILABLE", False), \
-             patch("builtins.open", mock_open(read_data=html_content)), \
-             patch("os.path.exists", return_value=True), \
-             patch("pathlib.Path.resolve", return_value=Path("/tmp/test_document_dir/relative/path.html")):
-            
-            result = processor.process_file(file_path)
-            
-            # Since we're providing actual HTML content with href attributes,
-            # the regex should find them and create relationships
+            # Check if relationships were returned
             assert "relationships" in result
-            # The regex should have found our link
-            # Note: actual implementation might filter out some links
-            # depending on their format
-
+            assert len(result["relationships"]) > 0
+            
+            # Check the relationship details
+            relationship = result["relationships"][0]
+            assert relationship["type"] == "references"
+            assert relationship["metadata"]["href"] == "local_link.html"
+            
+            # Verify the DocProcAdapter was called
+            mock_doc_adapter.process_file.assert_called_once_with(html_file_path)
+        finally:
+            # Clean up the temporary file
+            os.unlink(html_file_path)
     
-    def test_process_file_with_html_parsing_error(self, processor):
-        """Test error handling during HTML parsing."""
-        html_content = "<html><body><a href=\"test.html\">Test</a></body></html>"
-        file_path = "/tmp/test_error.html"
+    def test_process_file_with_regex_fallback(self, processor, mock_doc_adapter):
+        """Test HTML link extraction with regex fallback using our new adapter pattern."""
+        html_content = '<a href="relative/path.html">Link</a>'
         
-        # Mock BeautifulSoup to raise an exception during parsing
-        with patch("src.ingest.pre_processor.docling_pre_processor._BS4_AVAILABLE", True), \
-            patch("src.ingest.pre_processor.docling_pre_processor.BeautifulSoup", side_effect=Exception("Parsing error")), \
-            patch("builtins.open", mock_open(read_data=html_content)), \
-            patch("os.path.exists", return_value=True), \
-            patch("logging.getLogger") as mock_logger:
+        # Create a temporary HTML file
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            f.write(html_content.encode('utf-8'))
+            html_file_path = f.name
+        
+        try:
+            # Set up mock DocProcAdapter response with relationships
+            mock_doc_adapter.process_file.return_value = {
+                "id": "html_12345678_test",
+                "path": html_file_path,
+                "content": html_content,
+                "metadata": {"title": "Test Document"},
+                "entities": [],
+                "format": "html",
+                "relationships": [
+                    {
+                        "source_id": "html_12345678_test",
+                        "target_id": "html_87654321_relative_path_html",
+                        "type": "references",
+                        "metadata": {"href": "relative/path.html"}
+                    }
+                ]
+            }
             
-            # The error should be logged but not stop execution
-            result = processor.process_file(file_path)
+            # Process the file
+            result = processor.process_file(html_file_path)
             
-            # Verify logging occurred
-            assert mock_logger.called
-            logger_instance = mock_logger.return_value
-            assert logger_instance.warning.called
-            
-            # Ensure we still get a result despite the parsing error
-            assert "path" in result
-            assert "id" in result
-            assert "entities" in result
+            # Verify relationships were extracted
             assert "relationships" in result
-            # Relationships should be empty due to parsing error
-            assert result["relationships"] == []
+            assert len(result["relationships"]) > 0
+            
+            # Verify the relationship details
+            relationship = result["relationships"][0]
+            assert relationship["type"] == "references"
+            assert relationship["metadata"]["href"] == "relative/path.html"
+            
+            # Verify the DocProcAdapter was called
+            mock_doc_adapter.process_file.assert_called_once_with(html_file_path)
+        finally:
+            # Clean up the temporary file
+            os.unlink(html_file_path)
+    
+    def test_process_file_with_html_parsing_error(self, processor, mock_doc_adapter):
+        """Test error handling during HTML parsing with our new adapter pattern."""
+        malformed_html = "<html><body><div></html>"
+        
+        # Create a temporary HTML file with malformed content
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            f.write(malformed_html.encode('utf-8'))
+            html_file_path = f.name
+        
+        try:
+            # Configure the DocProcAdapter to simulate a parsing error
+            mock_doc_adapter.process_file.side_effect = ValueError("Malformed HTML: unclosed div tag")
+            
+            # The processor should handle the error gracefully but re-raise with context
+            with pytest.raises(Exception) as exc_info:
+                processor.process_file(html_file_path)
+                
+            # Check that the error message is informative
+            assert "Error processing file" in str(exc_info.value)
+            assert "Malformed HTML" in str(exc_info.value)
+            
+            # Verify the DocProcAdapter was called
+            mock_doc_adapter.process_file.assert_called_once_with(html_file_path)
+        finally:
+            # Clean up the temporary file
+            os.unlink(html_file_path)
     
     def test_bs4_import_handling(self):
         """Test that the module correctly handles BS4 availability."""

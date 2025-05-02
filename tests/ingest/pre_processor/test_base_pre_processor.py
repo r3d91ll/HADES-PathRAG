@@ -38,6 +38,8 @@ class TestablePreProcessor(BasePreProcessor):
             "type": "test-type",
             "metadata": {"test": "metadata"}
         }
+        
+    # We now inherit process_batch and get_errors from BasePreProcessor
 
 
 class TestBasePreProcessor:

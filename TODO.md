@@ -18,25 +18,43 @@
   - [ ] Add append mode to add documents to existing structures
   - [ ] Update CLI with options to control database initialization behavior
 
-### vLLM Integration
+### Model Engine Integration
 
-#### Phase 1: Embedding Acceleration (Current Priority)
+#### Phase 1: Foundation & Embedding (Current Priority)
 
 - [x] Add vLLM to project dependencies in pyproject.toml
-- [ ] Install and configure vLLM locally (requires separate installation via setup_dev_env.sh)
-- [x] Set up vLLM server for embedding generation
-- [x] Create adapter for vLLM in `src/isne/adapters/vllm_adapter.py`
-- [x] Update embedding processor to support vLLM
-- [ ] Benchmark embedding performance with vLLM
-- [ ] Document vLLM embedding setup in `docs/integration/vllm_embeddings.md`
+- [x] Install and configure vLLM locally (verified with `vllm -v` shows 0.8.4)
+- [x] Create unified model engine architecture
+  - [x] Implement abstract base classes for adapter pattern
+  - [x] Create model-agnostic configuration system
+  - [x] Refactor `src/isne/adapters/vllm_adapter.py` → `src/model_engine/adapters/vllm_adapter.py`
+  - [x] Refactor `src/pathrag/vllm_adapter.py` → `src/pathrag/model_engine_adapter.py`
+  - [x] Add server lifecycle management with `ServerManager`
+- [x] Update embedding processor to use model_engine
+- [x] Create model configuration files
+  - [x] Create `src/config/model_config.py` with Pydantic models
+  - [x] Create `src/config/model_config.yaml` with specialized models for different tasks
+- [x] Create startup helper script `scripts/start_vllm_server.py`
+- [x] Add test suite for VLLMAdapter
+- [ ] Add missing components
+  - [ ] Add systemd / Docker compose example to docs
+  - [ ] Create helpers for non-vLLM backends (Ollama, HuggingFace)
+- [ ] Benchmark embedding performance with different backends
+- [ ] Document model engine setup in `docs/integration/model_engine.md`
 
-#### Phase 2: LLM Inference (Future Work)
+#### Phase 2: Advanced LLM Integration
 
-- [ ] Create vLLM adapter compatible with existing PathRAG inference interfaces
-- [ ] Update API clients to use vLLM's OpenAI-compatible endpoints
-- [ ] Ensure backward compatibility with existing code
-- [ ] Document vLLM inference setup in `docs/integration/vllm_inference.md`
-- [ ] Update example scripts to use vLLM instead of Ollama
+- [x] Create model engine adapter compatible with PathRAG interfaces
+- [x] Support multiple specialized models:
+  - [x] Code-specific embedding model
+  - [x] General document embedding model
+  - [x] Chunking model
+  - [x] Relationship extraction model
+  - [x] Different models for inference (default, code, pathfinder)
+- [ ] Add auto-detection of available GPU resources
+- [ ] Implement model caching and memory optimization
+- [ ] Update example scripts to use model_engine
+- [ ] Add dynamic model switching based on content type
 - [ ] Integrate vLLM with the FastAPI interface
 
 ### ISNE Pipeline Enhancement

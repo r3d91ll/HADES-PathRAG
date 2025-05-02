@@ -1,35 +1,48 @@
 """
-Website and PDF specific pre-processors built on Docling.
+Website and PDF specific pre-processors.
 
-These are thin wrappers around `DoclingPreProcessor` that tag the resulting
-`doc["type"]` for explicit routing (e.g., "html", "pdf").
+These classes use the new docproc module adapters to process website and PDF documents.
+They maintain backward compatibility with the previous interface while using the
+new document processing capabilities.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Union, Any
+from typing import Dict, Union, Any, Optional
 
-from .docling_pre_processor import DoclingPreProcessor
-
-
-class WebsitePreProcessor(DoclingPreProcessor):
-    """Pre-process HTML / website documents via Docling."""
-
-    DEFAULT_TYPE = "html"
-
-    def process_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
-        doc = super().process_file(file_path)
-        doc["type"] = self.DEFAULT_TYPE
-        return doc
+from .base_pre_processor import DocProcAdapter
 
 
-class PDFPreProcessor(DoclingPreProcessor):
-    """Pre-process PDF documents via Docling."""
+class WebsitePreProcessor(DocProcAdapter):
+    """Pre-process HTML / website documents via the docproc module."""
 
-    DEFAULT_TYPE = "pdf"
+    def __init__(self) -> None:
+        # Initialize with html format
+        super().__init__(format_override="html")
 
-    def process_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
-        doc = super().process_file(file_path)
-        doc["type"] = self.DEFAULT_TYPE
-        return doc
+    def process_file(self, file_path: Union[str, Path]) -> Optional[Dict[str, Any]]:
+        # Get the processed document from the adapter
+        result = super().process_file(str(file_path))
+        
+        # Ensure the type is set to html
+        if result:
+            result["type"] = "html"
+        return result
+
+
+class PDFPreProcessor(DocProcAdapter):
+    """Pre-process PDF documents via the docproc module."""
+
+    def __init__(self) -> None:
+        # Initialize with pdf format
+        super().__init__(format_override="pdf")
+
+    def process_file(self, file_path: Union[str, Path]) -> Optional[Dict[str, Any]]:
+        # Get the processed document from the adapter
+        result = super().process_file(str(file_path))
+        
+        # Ensure the type is set to pdf
+        if result:
+            result["type"] = "pdf"
+        return result

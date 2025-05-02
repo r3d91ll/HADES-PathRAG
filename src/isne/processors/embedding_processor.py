@@ -15,7 +15,7 @@ import hashlib
 from datetime import datetime
 import time
 
-from src.isne.adapters.vllm_adapter import VLLMAdapter
+from src.model_engine.adapters.vllm_adapter import VLLMAdapter
 
 from src.isne.types.models import IngestDocument, IngestDataset, DocumentRelation, EmbeddingConfig
 from src.isne.processors.base_processor import BaseProcessor, ProcessorConfig, ProcessorResult
@@ -276,23 +276,12 @@ class EmbeddingProcessor(BaseProcessor):
             # Store the adapter
             self.model = vllm_adapter
             
-            # Create embedding function
-            def get_tf_embeddings(texts: List[str]) -> List[List[float]]:
-                embeddings = []
-                
-                for i in range(0, len(texts), self.embedding_config.batch_size):
-                    batch = texts[i:i+self.embedding_config.batch_size]
-                    batch_embeddings = self.model(batch).numpy()
-                    
-                    # Normalize if requested
-                    if self.embedding_config.normalize_embeddings:
-                        batch_embeddings = batch_embeddings / np.linalg.norm(batch_embeddings, axis=1, keepdims=True)
-                    
-                    embeddings.extend(batch_embeddings.tolist())
-                
-                return embeddings
+            # Create embedding function that properly uses the VLLMAdapter
+            def get_vllm_embeddings(texts: List[str]) -> List[List[float]]:
+                # VLLMAdapter already handles batching and normalization internally
+                return self.model.get_embeddings(texts)
             
-            self.embedding_fn = get_tf_embeddings
+            self.embedding_fn = get_vllm_embeddings
             
         except ImportError:
             logger.error("tensorflow and tensorflow-hub not installed. Please install them with 'pip install tensorflow tensorflow-hub'")

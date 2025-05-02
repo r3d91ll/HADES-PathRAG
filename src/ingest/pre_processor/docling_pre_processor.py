@@ -31,15 +31,21 @@ except ImportError:
         pass
 
 from src.ingest.adapters.docling_adapter import DoclingAdapter
-from .base_pre_processor import BasePreProcessor
+from .base_pre_processor import BasePreProcessor, DocProcAdapter
 
 class DoclingPreProcessor(BasePreProcessor):
     """
     Pre-processor for documents using Docling.
+    
+    This implementation now uses the new DocProcAdapter internally while maintaining
+    the same interface for backward compatibility.
     """
     def __init__(self, options: Optional[Dict[str, Any]] = None) -> None:
         super().__init__()
+        # Keep the original adapter for backward compatibility with tests
         self.adapter = DoclingAdapter(options)
+        # Use new docproc adapter for actual processing
+        self.doc_adapter = DocProcAdapter()
 
     def analyze_text(self, text: str) -> Any:
         """
@@ -103,122 +109,90 @@ class DoclingPreProcessor(BasePreProcessor):
 
     def process_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
         """
-        Process a document file and return its parsed structure.
+        Process a single file using docproc via DocProcAdapter.
         
         Args:
-            file_path: Path to the document file
+            file_path: Path to the file to process
             
         Returns:
-            Dictionary with parsed content and metadata
+            Processed document data
         """
-        import os
+        # Convert to string if it's a Path object
+        file_path_str = str(file_path)
         
-        # Verify file exists
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
-            
-        # Assume the adapter has a parse method that we need to mock in testing
-        # In a real implementation, this would use the Docling adapter to parse the file
+        # Use the DocProcAdapter to process the file
         try:
-            with open(file_path, 'r') as f:
-                content = f.read()
+            # Process the file using the new docproc module
+            result = self.doc_adapter.process_file(file_path_str)
+            
+            # If the adapter couldn't process the file, fall back to the legacy adapter
+            if result is None:
+                # Keep original behavior for backward compatibility
+                file_path_obj = Path(file_path)
+                file_path_str = str(file_path_obj.absolute())
                 
-            # ------------------------------------------------------------------
-            # Compute a stable document ID based on file path (matches repository)
-            # ------------------------------------------------------------------
-            file_path_str = str(file_path)
-            file_name_raw = Path(file_path).name
-            # Sanitize file name to be ArangoDB _key compatible
-            file_name_sanitized = re.sub(r"[^A-Za-z0-9_:\-@\.\(\)\+\,=;\$!\*'%]+", "_", file_name_raw)
-            doc_id = f"html_{hashlib.md5(file_path_str.encode()).hexdigest()[:8]}_{file_name_sanitized}"
-            
-            # Analyze the content (placeholder using Docling adapter)
-            analysis = self.analyze_text(content)
-            
-            # Extract entities and keywords via adapter
-            entities = self.adapter.extract_entities(file_path)
-            keywords = self.adapter.extract_keywords(content)
-            
-            # --------------------------------------------------------------
-            # Extract relationships by parsing HTML <a href="..."> links
-            # --------------------------------------------------------------
-            relationships: List[Dict[str, Any]] = []
-            try:
-                if _BS4_AVAILABLE:
-                    soup = BeautifulSoup(content, "html.parser")
-                    links = soup.find_all('a', href=True)
-                    for a_tag in links:
-                        # Cast to Tag to ensure type safety
-                        tag = cast(Tag, a_tag)
-                        # Use get method which is safer for type checking
-                        href = tag.get('href', '')
-                        if not isinstance(href, str):
-                            href = str(href)
-                        # Skip empty or purely internal anchors
-                        if not href or href.startswith('#'):
-                            continue
-                        # Identify external links (http/https). We currently skip storing them as nodes.
-                        if href.startswith('http://') or href.startswith('https://'):
-                            continue
-                        # Resolve relative paths against current document directory
-                        # Strip any URL parameters/fragments then sanitize
-                        parsed_href = urlparse(href)
-                        clean_path = parsed_href.path  # Remove query & fragment
-                        target_path = (Path(file_path).parent / clean_path).resolve()
-                        target_path_str = str(target_path)
-                        target_file_name_raw = target_path.name
-                        target_file_name = re.sub(r"[^A-Za-z0-9_:\-@\.\(\)\+\,=;\$!\*'%]+", "_", target_file_name_raw)
-                        target_id = f"html_{hashlib.md5(target_path_str.encode()).hexdigest()[:8]}_{target_file_name}"
-                        relationships.append({
-                            'source_id': doc_id,
-                            'target_id': target_id,
-                            'type': 'references',
-                            'weight': 1.0,
-                            'bidirectional': False,
-                            'metadata': {
-                                'href': href
-                            }
-                        })
+                # Check if file exists
+                if not file_path_obj.exists():
+                    raise FileNotFoundError(f"File not found: {file_path_str}")
+                
+                # Extract file metadata
+                file_name_raw = file_path_obj.name
+                file_ext = file_path_obj.suffix.lower()
+                
+                # Sanitize file name to be ArangoDB _key compatible
+                file_name_sanitized = re.sub(r"[^A-Za-z0-9_:\-@\.\(\)\+\,=;\$!\*'%]+", "_", file_name_raw)
+                
+                # Determine the document type prefix based on file extension
+                doc_type_prefix = "html"  # Default
+                if file_ext == ".pdf":
+                    doc_type_prefix = "pdf"
+                elif file_ext == ".py":
+                    doc_type_prefix = "python"
+                elif file_ext == ".md":
+                    doc_type_prefix = "markdown"
+                
+                # Compute a stable document ID based on file path
+                doc_id = f"{doc_type_prefix}_{hashlib.md5(file_path_str.encode()).hexdigest()[:8]}_{file_name_sanitized}"
+                
+                # Use the original adapter for tests
+                parsed_doc = self.adapter.analyze_file(file_path)
+                
+                # Extract text content based on what's available in the parsed document
+                if isinstance(parsed_doc, dict):
+                    if 'text' in parsed_doc:
+                        content = parsed_doc['text']
+                    elif 'content' in parsed_doc:
+                        content = parsed_doc['content']
+                    else:
+                        # Use the entire parsed document as a string
+                        content = str(parsed_doc)
                 else:
-                    # Basic fallback parser that searches for href="..." patterns
-                    for match in re.finditer(r'href=["\']([^"\']+)["\']', content):
-                        href = match.group(1)
-                        if not href or href.startswith('#') or href.startswith('http://') or href.startswith('https://'):
-                            continue
-                        parsed_href = urlparse(href)
-                        clean_path = parsed_href.path
-                        target_path = (Path(file_path).parent / clean_path).resolve()
-                        target_path_str = str(target_path)
-                        target_file_name_raw = target_path.name
-                        target_file_name = re.sub(r"[^A-Za-z0-9_:\-@\.\(\)\+\,=;\$!\*'%]+", "_", target_file_name_raw)
-                        target_id = f"html_{hashlib.md5(target_path_str.encode()).hexdigest()[:8]}_{target_file_name}"
-                        relationships.append({
-                            'source_id': doc_id,
-                            'target_id': target_id,
-                            'type': 'references',
-                            'weight': 1.0,
-                            'bidirectional': False,
-                            'metadata': {
-                                'href': href
-                            }
-                        })
-            except Exception as parse_err:
-                # Log but continue
-                import logging
-                logging.getLogger(__name__).warning(f"Failed to parse HTML links in {file_path}: {parse_err}")
+                    # If not a dict, convert to string
+                    content = str(parsed_doc)
                 
-            # ------------------------------------------------------------------
-            # Build and return processed document structure
-            # ------------------------------------------------------------------
-            return {
-                "path": str(file_path),
-                "id": doc_id,
-                "type": "html",
-                "content": content,
-                "entities": entities,
-                "keywords": keywords,
-                "relationships": relationships,
-                "analysis": analysis
-            }
+                # Extract entities and keywords
+                entities = self.adapter.extract_entities(file_path)
+                keywords = self.adapter.extract_keywords(content)
+                
+                # Store the analysis if available
+                analysis = parsed_doc.get('analysis', {'type': 'basic_analysis'})
+                
+                # Build the basic result object
+                result = {
+                    "id": doc_id,
+                    "path": file_path_str,
+                    "content": content,
+                    "metadata": {
+                        "file_name": file_name_raw,
+                        "file_type": doc_type_prefix
+                    },
+                    "entities": entities,
+                    "keywords": keywords,
+                    "analysis": analysis
+                }
+            
+            return result
+            
         except Exception as e:
-            raise Exception(f"Error processing file {file_path}: {str(e)}")
+            error_message = f"Error processing file {file_path_str}: {str(e)}"
+            raise Exception(error_message)
