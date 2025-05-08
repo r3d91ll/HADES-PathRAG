@@ -22,28 +22,12 @@ __all__ = ["DoclingAdapter"]
 
 
 # ---------------------------------------------------------------------------
-# Check Docling availability - handle dependency issues gracefully
+# Import Docling - we now require it to be installed
 # ---------------------------------------------------------------------------
+from docling.document_converter import DocumentConverter
 
-# Set default availability
-DOCLING_AVAILABLE = False
-
-# Try to import Docling safely
-try:
-    # Try to import DocumentConverter
-    from docling.document_converter import DocumentConverter
-    DOCLING_AVAILABLE = True
-except (ImportError, RuntimeError):
-    # Define a placeholder class if Docling is not available
-    class DocumentConverter:  # type: ignore
-        """Placeholder for DocumentConverter when docling is not available."""
-        
-        def convert(self, file_path: Union[str, Path], **_: Any) -> Any:
-            """Placeholder that raises an import error."""
-            raise ImportError(
-                "Docling is required for DoclingAdapter; install with `pip install docling`."
-            )
-
+# Set flag for tests
+DOCLING_AVAILABLE = True
 
 
 __all__ = ["DoclingAdapter"]
@@ -94,16 +78,10 @@ class DoclingAdapter(BaseAdapter):
     def __init__(self, options: Optional[Dict[str, Any]] = None) -> None:
         """Initialize the DoclingAdapter with configuration options."""
         self.options: Dict[str, Any] = options or {}
-
-        # Always attempt to instantiate `DocumentConverter` – this allows
-        # unit-tests to supply a patched/mock implementation even when the real
-        # dependency is missing.
-        try:
-            self.converter = DocumentConverter()
-            self._docling_available = True
-        except Exception:
-            self.converter = cast(Any, None)
-            self._docling_available = False
+        
+        # Initialize the DocumentConverter - this will fail if Docling is not available
+        # which is the desired behavior
+        self.converter = DocumentConverter()
 
     # ------------------------------------------------------------------
     # Public API – file based processing
@@ -112,6 +90,19 @@ class DoclingAdapter(BaseAdapter):
     def process(
         self, file_path: Path, options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
+        """Process a document file using Docling.
+        
+        Args:
+            file_path: Path to the document file
+            options: Optional processing options
+            
+        Returns:
+            Processed document with metadata and content
+            
+        Raises:
+            FileNotFoundError: If the file doesn't exist
+            ValueError: If Docling fails to process the file
+        """
         if not file_path.exists():
             raise FileNotFoundError(file_path)
 
@@ -120,44 +111,6 @@ class DoclingAdapter(BaseAdapter):
 
         # Build deterministic ID – same pattern used across adapters
         doc_id = _build_doc_id(file_path, format_name)
-
-        # ------------------------------------------------------------------
-        # Fallback path when Docling converter is unavailable.
-        # ------------------------------------------------------------------
-        if not self._docling_available or self.converter is None:
-            # Special handling for different file types
-            if format_name == 'pdf':
-                # For PDF files, attempt to extract text using a basic approach
-                # In a real implementation, this would use a PDF library
-                try:
-                    # For testing, we might be dealing with a text file with .pdf extension
-                    text_content = file_path.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    # Real binary PDF files can't be read as text
-                    # This is a simplified placeholder where a real implementation would
-                    # use a library like PyPDF2, pdfminer, or pdf2text
-                    text_content = f"[PDF content from {file_path.name}]"
-            else:
-                # For non-PDF files, continue with text extraction
-                try:
-                    text_content = file_path.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    # Binary files or unreadable encodings
-                    text_content = ""
-
-            # Simple document with basic metadata
-            return {
-                "id": doc_id,
-                "source": str(file_path),
-                "content": text_content,
-                "content_type": "text",  # Content is always returned as text
-                "format": format_name,    # But format reflects the original format
-                "metadata": {
-                    "format": format_name,
-                    "file_path": str(file_path),
-                },
-                "entities": []
-            }
 
         # Build converter kwargs – currently we only surface `use_ocr`
         converter_kwargs: Dict[str, Any] = {}

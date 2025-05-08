@@ -97,7 +97,11 @@ class PythonAdapter(BaseAdapter):
             raise FileNotFoundError(f"Code file not found: {file_path}")
 
         # Get file extension and determine language
-        language = file_path.suffix.lstrip(".").lower() or "unknown"
+        # Make sure language is consistently set to "python" for Python files
+        if file_path.suffix.lower() == ".py":
+            language = "python"
+        else:
+            language = file_path.suffix.lstrip(".").lower() or "unknown"
         
         # Read file content
         encoding = process_options.get("encoding", "utf-8")

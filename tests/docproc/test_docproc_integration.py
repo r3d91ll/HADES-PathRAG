@@ -112,13 +112,11 @@ class DocProcIntegrationTest(unittest.TestCase):
         self.assertEqual(result["metadata"]["format"], "pdf")
         
         # Since we're working with a real PDF (PathRAG_paper.pdf)
-        # Either we'll get real content via an extraction library
-        # or we'll get our placeholder text if using the fallback implementation
+        # Docling is expected to extract content from it
         content = result["content"]
         self.assertTrue(len(content) > 0, "PDF content should not be empty")
-        # Check for either real PDF content or our placeholder
-        self.assertTrue("PathRAG_paper.pdf" in content or "%PDF-" in content, 
-                        "Content should contain either PDF signature or placeholder")
+        # Check for PDF content - we can't check for specific text since extraction varies
+        # but we can verify content was extracted and is not empty
     
     def test_registry_processing(self):
         """Test processing files through the adapter registry."""

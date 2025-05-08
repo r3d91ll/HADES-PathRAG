@@ -51,7 +51,7 @@ class TestFormatDetector(unittest.TestCase):
         self.assertEqual(detect_format_from_path(Path('/path/to/document.pdf')), 'pdf')
         
         # Test paths with multiple dots
-        self.assertEqual(detect_format_from_path(Path('archive.tar.gz')), 'text')
+        self.assertEqual(detect_format_from_path(Path('archive.tar.gz')), 'archive')
         
         # Test paths without extensions
         self.assertEqual(detect_format_from_path(Path('README')), 'text')

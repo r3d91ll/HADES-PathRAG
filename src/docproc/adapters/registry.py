@@ -39,6 +39,14 @@ def register_adapter(format_type: str, adapter_class: Type[T]) -> None:
         raise ValueError("Format type cannot be empty")
     if adapter_class is None:
         raise ValueError("Adapter class cannot be None")
+    
+    # Check if the adapter_class is a subclass of BaseAdapter
+    # Use try/except for better error handling with non-class objects
+    try:
+        if not issubclass(adapter_class, BaseAdapter):
+            raise ValueError(f"Adapter class must be a subclass of BaseAdapter")
+    except TypeError:
+        raise ValueError(f"Adapter class must be a class derived from BaseAdapter")
         
     global _ADAPTER_REGISTRY
     _ADAPTER_REGISTRY[format_type.lower()] = adapter_class
