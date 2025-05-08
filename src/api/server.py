@@ -6,11 +6,11 @@ This module provides the API endpoints for interacting with the HADES-PathRAG sy
 
 import logging
 import time
-from typing import Optional
+from typing import Optional, Dict, Any, List, cast
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import WriteRequest, QueryRequest, WriteResponse, QueryResponse, StatusResponse
+from .models import WriteRequest, QueryRequest, WriteResponse, QueryResponse, StatusResponse, QueryResult
 from .core import PathRAGSystem
 
 # Configure logging
@@ -57,7 +57,7 @@ def get_pathrag_system() -> PathRAGSystem:
 
 
 @app.post("/write", response_model=WriteResponse)
-async def write(request: WriteRequest, system: PathRAGSystem = Depends(get_pathrag_system)):
+async def write(request: WriteRequest, system: PathRAGSystem = Depends(get_pathrag_system)) -> WriteResponse:
     """
     Write/update data in the knowledge graph.
     
@@ -85,7 +85,7 @@ async def write(request: WriteRequest, system: PathRAGSystem = Depends(get_pathr
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest, system: PathRAGSystem = Depends(get_pathrag_system)):
+async def query(request: QueryRequest, system: PathRAGSystem = Depends(get_pathrag_system)) -> QueryResponse:
     """
     Query the PathRAG system and get results.
     
@@ -99,19 +99,33 @@ async def query(request: QueryRequest, system: PathRAGSystem = Depends(get_pathr
         logger.info(f"Processing query: {request.query}")
         start_time = time.time()
         
-        results = system.query(
-            query=request.query,
+        raw_results = system.query(
+            query_text=request.query,
             max_results=request.max_results
         )
         
-        return results
+        # Convert raw results to QueryResult objects
+        query_results: List[QueryResult] = []
+        for result in raw_results:
+            query_results.append(QueryResult(
+                content=result.get("content", ""),
+                path=result.get("path", "unknown"), # Path is required
+                confidence=result.get("confidence", 0.0),
+                metadata=result.get("metadata", {})
+            ))
+        
+        processing_time = time.time() - start_time
+        return QueryResponse(
+            results=query_results,
+            execution_time_ms=processing_time * 1000
+        )
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/status", response_model=StatusResponse)
-async def status(system: PathRAGSystem = Depends(get_pathrag_system)):
+async def status(system: PathRAGSystem = Depends(get_pathrag_system)) -> StatusResponse:
     """
     Check the system status.
     
@@ -120,8 +134,13 @@ async def status(system: PathRAGSystem = Depends(get_pathrag_system)):
     """
     try:
         logger.info("Processing status request")
-        status_info = system.system_status
-        return StatusResponse(**status_info)
+        status_info = system.get_status()
+        # Convert status_info to match the expected StatusResponse format
+        return StatusResponse(
+            status=status_info.get("status", "unknown"),
+            document_count=status_info.get("document_count", 0),
+            version=status_info.get("version", "0.0.0")
+        )
     except Exception as e:
         logger.error(f"Error getting status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

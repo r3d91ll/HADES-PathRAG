@@ -1,6 +1,9 @@
 GRAPH_FIELD_SEP = "<SEP>"
+from typing import Dict, List, Union, Any
+from src.types.common import DocumentContent
 
-PROMPTS = {}
+# Define the PROMPTS dictionary with proper type annotation
+PROMPTS: Dict[str, Union[str, List[str]]] = {}
 
 PROMPTS["DEFAULT_LANGUAGE"] = "English"
 PROMPTS["DEFAULT_TUPLE_DELIMITER"] = "<|>"
@@ -51,8 +54,7 @@ Text: {input_text}
 Output:
 """
 
-PROMPTS["entity_extraction_examples"] = [
-    """Example 1:
+PROMPTS["entity_extraction_examples"] = ["""Example 1:
 
 Entity_types: [person, technology, mission, organization, location]
 Text:
@@ -205,8 +207,7 @@ Output:
 
 """
 
-PROMPTS["keywords_extraction_examples"] = [
-    """Example 1:
+PROMPTS["keywords_extraction_examples"] = ["""Example 1:
 
 Query: "How does international trade influence global economic stability?"
 ################

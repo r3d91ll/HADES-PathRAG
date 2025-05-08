@@ -4,11 +4,11 @@
 # Global server settings
 server:
   host: localhost
-  port: 8000
-  tensor_parallel_size: 1
-  gpu_memory_utilization: 0.85
-  dtype: auto
-  max_model_len: 4096
+  port: 8123  # Changed from 8000 to avoid port conflicts
+  tensor_parallel_size: 1  # Setting to 1 to ensure model loading works on a single GPU
+  gpu_memory_utilization: 0.95
+  dtype: "float16"  # Explicitly use float16 instead of auto
+  quantization: "fp8"  # Explicitly enable FP8 quantization
 
 # Ingestion-related models (used by Chonky, ISNE, etc.)
 ingestion:
@@ -36,7 +36,7 @@ ingestion:
   # Relationship extraction model for ISNE
   # Used to extract relationships between documents if not already defined
   relationship:
-    model_id: Qwen2.5-7b-instruct
+    model_id: Qwen/Qwen2.5-7B-Instruct
     max_tokens: 1024
     temperature: 0.1
     top_p: 0.95
@@ -52,7 +52,7 @@ ingestion:
 inference:
   # Default general-purpose model
   general:
-    model_id: Llama-3-8b
+    model_id: unsloth/Qwen3-14B
     max_tokens: 2048
     temperature: 0.7
     top_p: 0.9
@@ -62,7 +62,7 @@ inference:
     
   # Code-specific model for programming tasks
   code:
-    model_id: Qwen2.5-coder
+    model_id: Qwen/Qwen2.5-72B-Coder
     max_tokens: 4096
     temperature: 0.2
     top_p: 0.95
@@ -72,7 +72,7 @@ inference:
     
   # Fast model for quick responses when appropriate
   fast:
-    model_id: Qwen2.5-7b
+    model_id: Qwen/Qwen2.5-7B
     max_tokens: 1024
     temperature: 0.8
     top_p: 0.9

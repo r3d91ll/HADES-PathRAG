@@ -1,0 +1,302 @@
+{
+  "id": "python_03eb9250",
+  "source": "/home/todd/ML-Lab/Olympus/HADES-PathRAG/data/file_batcher.py",
+  "content": "```python\n\"\"\"\nFile batching utilities for preprocessing and ingestion.\n\nThis module provides a centralized system for file discovery and batching\nby file type to enable parallel processing in the ingestion pipeline.\n\"\"\"\n\nfrom collections import defaultdict\nimport os\nimport fnmatch\nfrom typing import Dict, List, Set, Optional\n\nclass FileBatcher:\n    \"\"\"Centralized file discovery and batching system for ingestion pipeline.\"\"\"\n    \n    def __init__(self, \n                 file_type_map: Optional[Dict[str, List[str]]] = None,\n                 exclude_patterns: Optional[List[str]] = None):\n        \"\"\"\n        Initialize with file type mappings and exclusion patterns.\n        \n        Args:\n            file_type_map: Dictionary mapping file types to extensions\n                           e.g., {'python': ['.py'], 'markdown': ['.md']}\n            exclude_patterns: List of glob patterns to exclude\n        \"\"\"\n        self.file_type_map = file_type_map or {\n            'python': ['.py'],\n            'javascript': ['.js', '.jsx', '.ts', '.tsx'],\n            'java': ['.java'],\n            'cpp': ['.cpp', '.hpp', '.cc', '.h'],\n            'markdown': ['.md', '.markdown'],\n            'pdf': ['.pdf'],\n            'json': ['.json'],\n            'csv': ['.csv'],\n            'text': ['.txt'],\n            'html': ['.html', '.htm'],\n            'xml': ['.xml'],\n        }\n        \n        # Reverse mapping for quick lookup: extension -> type\n        self.ext_to_type = {}\n        for file_type, extensions in self.file_type_map.items():\n            for ext in extensions:\n                self.ext_to_type[ext] = file_type\n                \n        self.exclude_patterns = exclude_patterns or [\n            '__pycache__', \n            '.git',\n            'node_modules',\n            'venv',\n            '.env',\n            '.DS_Store'\n        ]\n        \n    def collect_files(self, root_dir: str) -> Dict[str, List[str]]:\n        \"\"\"\n        Scan directory once, returning files batched by type.\n        \n        Args:\n            root_dir: Root directory to scan\n            \n        Returns:\n            Dictionary mapping file types to lists of file paths\n        \"\"\"\n        batches = defaultdict(list)\n        \n        for dirpath, dirnames, filenames in os.walk(root_dir):\n            # Exclude directories in-place\n            dirnames[:] = [d for d in dirnames if not any(\n                fnmatch.fnmatch(os.path.relpath(os.path.join(dirpath, d), root_dir), pattern) or pattern in d\n                for pattern in self.exclude_patterns\n            )]\n\n            for fname in filenames:\n                rel_file_path = os.path.relpath(os.path.join(dirpath, fname), root_dir)\n                # Exclude files based on patterns\n                if any(fnmatch.fnmatch(rel_file_path, pattern) or fnmatch.fnmatch(fname, pattern) or pattern in fname\n                       for pattern in self.exclude_patterns):\n                    continue\n                # Get file extension and determine type\n                _, ext = os.path.splitext(fname)\n                ext = ext.lower()\n                file_type = self.ext_to_type.get(ext, 'other')\n                fpath = os.path.join(dirpath, fname)\n                batches[file_type].append(fpath)\n        return dict(batches)\n    \n    def get_stats(self, batches: Dict[str, List[str]]) -> Dict[str, int]:\n        \"\"\"\n        Get statistics about the batched files.\n        \n        Args:\n            batches: Output from collect_files()\n            \n        Returns:\n            Dictionary with counts per file type and total\n        \"\"\"\n        stats = {file_type: len(files) for file_type, files in batches.items()}\n        stats['total'] = sum(len(files) for files in batches.values())\n        return stats\n\n\ndef collect_and_batch_files(root_dir: str, \n                           file_type_map: Optional[Dict[str, List[str]]] = None,\n                           exclude_patterns: Optional[List[str]] = None) -> Dict[str, List[str]]:\n    \"\"\"\n    Convenience function to collect and batch files from a directory.\n    \n    Args:\n        root_dir: Root directory to scan\n        file_type_map: Optional mapping of file types to extensions\n        exclude_patterns: Optional list of patterns to exclude\n        \n    Returns:\n        Dictionary mapping file types to lists of file paths\n    \"\"\"\n    batcher = FileBatcher(file_type_map, exclude_patterns)\n    return batcher.collect_files(root_dir)\n\n```",
+  "content_type": "markdown",
+  "format": "python",
+  "raw_content": "\"\"\"\nFile batching utilities for preprocessing and ingestion.\n\nThis module provides a centralized system for file discovery and batching\nby file type to enable parallel processing in the ingestion pipeline.\n\"\"\"\n\nfrom collections import defaultdict\nimport os\nimport fnmatch\nfrom typing import Dict, List, Set, Optional\n\nclass FileBatcher:\n    \"\"\"Centralized file discovery and batching system for ingestion pipeline.\"\"\"\n    \n    def __init__(self, \n                 file_type_map: Optional[Dict[str, List[str]]] = None,\n                 exclude_patterns: Optional[List[str]] = None):\n        \"\"\"\n        Initialize with file type mappings and exclusion patterns.\n        \n        Args:\n            file_type_map: Dictionary mapping file types to extensions\n                           e.g., {'python': ['.py'], 'markdown': ['.md']}\n            exclude_patterns: List of glob patterns to exclude\n        \"\"\"\n        self.file_type_map = file_type_map or {\n            'python': ['.py'],\n            'javascript': ['.js', '.jsx', '.ts', '.tsx'],\n            'java': ['.java'],\n            'cpp': ['.cpp', '.hpp', '.cc', '.h'],\n            'markdown': ['.md', '.markdown'],\n            'pdf': ['.pdf'],\n            'json': ['.json'],\n            'csv': ['.csv'],\n            'text': ['.txt'],\n            'html': ['.html', '.htm'],\n            'xml': ['.xml'],\n        }\n        \n        # Reverse mapping for quick lookup: extension -> type\n        self.ext_to_type = {}\n        for file_type, extensions in self.file_type_map.items():\n            for ext in extensions:\n                self.ext_to_type[ext] = file_type\n                \n        self.exclude_patterns = exclude_patterns or [\n            '__pycache__', \n            '.git',\n            'node_modules',\n            'venv',\n            '.env',\n            '.DS_Store'\n        ]\n        \n    def collect_files(self, root_dir: str) -> Dict[str, List[str]]:\n        \"\"\"\n        Scan directory once, returning files batched by type.\n        \n        Args:\n            root_dir: Root directory to scan\n            \n        Returns:\n            Dictionary mapping file types to lists of file paths\n        \"\"\"\n        batches = defaultdict(list)\n        \n        for dirpath, dirnames, filenames in os.walk(root_dir):\n            # Exclude directories in-place\n            dirnames[:] = [d for d in dirnames if not any(\n                fnmatch.fnmatch(os.path.relpath(os.path.join(dirpath, d), root_dir), pattern) or pattern in d\n                for pattern in self.exclude_patterns\n            )]\n\n            for fname in filenames:\n                rel_file_path = os.path.relpath(os.path.join(dirpath, fname), root_dir)\n                # Exclude files based on patterns\n                if any(fnmatch.fnmatch(rel_file_path, pattern) or fnmatch.fnmatch(fname, pattern) or pattern in fname\n                       for pattern in self.exclude_patterns):\n                    continue\n                # Get file extension and determine type\n                _, ext = os.path.splitext(fname)\n                ext = ext.lower()\n                file_type = self.ext_to_type.get(ext, 'other')\n                fpath = os.path.join(dirpath, fname)\n                batches[file_type].append(fpath)\n        return dict(batches)\n    \n    def get_stats(self, batches: Dict[str, List[str]]) -> Dict[str, int]:\n        \"\"\"\n        Get statistics about the batched files.\n        \n        Args:\n            batches: Output from collect_files()\n            \n        Returns:\n            Dictionary with counts per file type and total\n        \"\"\"\n        stats = {file_type: len(files) for file_type, files in batches.items()}\n        stats['total'] = sum(len(files) for files in batches.values())\n        return stats\n\n\ndef collect_and_batch_files(root_dir: str, \n                           file_type_map: Optional[Dict[str, List[str]]] = None,\n                           exclude_patterns: Optional[List[str]] = None) -> Dict[str, List[str]]:\n    \"\"\"\n    Convenience function to collect and batch files from a directory.\n    \n    Args:\n        root_dir: Root directory to scan\n        file_type_map: Optional mapping of file types to extensions\n        exclude_patterns: Optional list of patterns to exclude\n        \n    Returns:\n        Dictionary mapping file types to lists of file paths\n    \"\"\"\n    batcher = FileBatcher(file_type_map, exclude_patterns)\n    return batcher.collect_files(root_dir)\n",
+  "metadata": {
+    "language": "py",
+    "format": "python",
+    "content_type": "code",
+    "file_size": 4435,
+    "line_count": 119,
+    "char_count": null,
+    "has_errors": false,
+    "function_count": 4,
+    "class_count": 1,
+    "import_count": 4,
+    "method_count": 0,
+    "has_module_docstring": true,
+    "has_syntax_errors": false,
+    "file_path": "/home/todd/ML-Lab/Olympus/HADES-PathRAG/data/file_batcher.py",
+    "module_count": 1
+  },
+  "entities": [
+    {
+      "type": "module",
+      "value": "File batching utilities for preprocessing and inge...",
+      "line": 1,
+      "confidence": 1.0
+    },
+    {
+      "type": "import",
+      "value": "from collections import defaultdict",
+      "line": 8,
+      "confidence": 1.0
+    },
+    {
+      "type": "import",
+      "value": "import os",
+      "line": 9,
+      "confidence": 1.0
+    },
+    {
+      "type": "import",
+      "value": "import fnmatch",
+      "line": 10,
+      "confidence": 1.0
+    },
+    {
+      "type": "import",
+      "value": "from typing import Dict, List, Set, Optional",
+      "line": 11,
+      "confidence": 1.0
+    },
+    {
+      "type": "class",
+      "value": "FileBatcher",
+      "line": 13,
+      "confidence": 1.0
+    },
+    {
+      "type": "function",
+      "value": "collect_and_batch_files",
+      "line": 104,
+      "confidence": 1.0
+    },
+    {
+      "type": "function",
+      "value": "__init__",
+      "line": 16,
+      "confidence": 1.0
+    },
+    {
+      "type": "function",
+      "value": "collect_files",
+      "line": 56,
+      "confidence": 1.0
+    },
+    {
+      "type": "function",
+      "value": "get_stats",
+      "line": 89,
+      "confidence": 1.0
+    }
+  ],
+  "error": null,
+  "relationships": [
+    {
+      "source": "<module>",
+      "target": "collections",
+      "type": "IMPORTS",
+      "weight": 0.7,
+      "line": 8
+    },
+    {
+      "source": "<module>",
+      "target": "os",
+      "type": "IMPORTS",
+      "weight": 0.7,
+      "line": 9
+    },
+    {
+      "source": "<module>",
+      "target": "fnmatch",
+      "type": "IMPORTS",
+      "weight": 0.7,
+      "line": 10
+    },
+    {
+      "source": "<module>",
+      "target": "typing",
+      "type": "IMPORTS",
+      "weight": 0.7,
+      "line": 11
+    },
+    {
+      "source": "FileBatcher",
+      "target": "__init__",
+      "type": "CONTAINS",
+      "weight": 0.9,
+      "line": 0
+    },
+    {
+      "source": "FileBatcher",
+      "target": "collect_files",
+      "type": "CONTAINS",
+      "weight": 0.9,
+      "line": 0
+    },
+    {
+      "source": "FileBatcher",
+      "target": "get_stats",
+      "type": "CONTAINS",
+      "weight": 0.9,
+      "line": 0
+    }
+  ],
+  "symbol_table": {
+    "type": "module",
+    "name": "file_batcher",
+    "docstring": "File batching utilities for preprocessing and ingestion.\n\nThis module provides a centralized system for file discovery and batching\nby file type to enable parallel processing in the ingestion pipeline.",
+    "path": "/home/todd/ML-Lab/Olympus/HADES-PathRAG/data/file_batcher.py",
+    "module_path": "file_batcher",
+    "line_range": [
+      1,
+      119
+    ],
+    "elements": [
+      {
+        "type": "import",
+        "name": "collections",
+        "alias": null,
+        "source": "stdlib",
+        "line_range": [
+          8,
+          8
+        ],
+        "content": "from collections import defaultdict"
+      },
+      {
+        "type": "import",
+        "name": "os",
+        "alias": null,
+        "source": "stdlib",
+        "line_range": [
+          9,
+          9
+        ],
+        "content": "import os"
+      },
+      {
+        "type": "import",
+        "name": "fnmatch",
+        "alias": null,
+        "source": "local",
+        "line_range": [
+          10,
+          10
+        ],
+        "content": "import fnmatch"
+      },
+      {
+        "type": "import",
+        "name": "typing",
+        "alias": null,
+        "source": "stdlib",
+        "line_range": [
+          11,
+          11
+        ],
+        "content": "from typing import Dict, List, Set, Optional"
+      },
+      {
+        "type": "class",
+        "name": "FileBatcher",
+        "qualified_name": "FileBatcher",
+        "docstring": "Centralized file discovery and batching system for ingestion pipeline.",
+        "base_classes": [],
+        "access": "public",
+        "line_range": [
+          13,
+          101
+        ],
+        "content": "class FileBatcher:\n    \"\"\"Centralized file discovery and batching system for ingestion pipeline.\"\"\"\n    \n    def __init__(self, \n                 file_type_map: Optional[Dict[str, List[str]]] = None,\n                 exclude_patterns: Optional[List[str]] = None):\n        \"\"\"\n        Initialize with file type mappings and exclusion patterns.\n        \n        Args:\n            file_type_map: Dictionary mapping file types to extensions\n                           e.g., {'python': ['.py'], 'markdown': ['.md']}\n            exclude_patterns: List of glob patterns to exclude\n        \"\"\"\n        self.file_type_map = file_type_map or {\n            'python': ['.py'],\n            'javascript': ['.js', '.jsx', '.ts', '.tsx'],\n            'java': ['.java'],\n            'cpp': ['.cpp', '.hpp', '.cc', '.h'],\n            'markdown': ['.md', '.markdown'],\n            'pdf': ['.pdf'],\n            'json': ['.json'],\n            'csv': ['.csv'],\n            'text': ['.txt'],\n            'html': ['.html', '.htm'],\n            'xml': ['.xml'],\n        }\n        \n        # Reverse mapping for quick lookup: extension -> type\n        self.ext_to_type = {}\n        for file_type, extensions in self.file_type_map.items():\n            for ext in extensions:\n                self.ext_to_type[ext] = file_type\n                \n        self.exclude_patterns = exclude_patterns or [\n            '__pycache__', \n            '.git',\n            'node_modules',\n            'venv',\n            '.env',\n            '.DS_Store'\n        ]\n        \n    def collect_files(self, root_dir: str) -> Dict[str, List[str]]:\n        \"\"\"\n        Scan directory once, returning files batched by type.\n        \n        Args:\n            root_dir: Root directory to scan\n            \n        Returns:\n            Dictionary mapping file types to lists of file paths\n        \"\"\"\n        batches = defaultdict(list)\n        \n        for dirpath, dirnames, filenames in os.walk(root_dir):\n            # Exclude directories in-place\n            dirnames[:] = [d for d in dirnames if not any(\n                fnmatch.fnmatch(os.path.relpath(os.path.join(dirpath, d), root_dir), pattern) or pattern in d\n                for pattern in self.exclude_patterns\n            )]\n\n            for fname in filenames:\n                rel_file_path = os.path.relpath(os.path.join(dirpath, fname), root_dir)\n                # Exclude files based on patterns\n                if any(fnmatch.fnmatch(rel_file_path, pattern) or fnmatch.fnmatch(fname, pattern) or pattern in fname\n                       for pattern in self.exclude_patterns):\n                    continue\n                # Get file extension and determine type\n                _, ext = os.path.splitext(fname)\n                ext = ext.lower()\n                file_type = self.ext_to_type.get(ext, 'other')\n                fpath = os.path.join(dirpath, fname)\n                batches[file_type].append(fpath)\n        return dict(batches)\n    \n    def get_stats(self, batches: Dict[str, List[str]]) -> Dict[str, int]:\n        \"\"\"\n        Get statistics about the batched files.\n        \n        Args:\n            batches: Output from collect_files()\n            \n        Returns:\n            Dictionary with counts per file type and total\n        \"\"\"\n        stats = {file_type: len(files) for file_type, files in batches.items()}\n        stats['total'] = sum(len(files) for files in batches.values())\n        return stats",
+        "decorators": [],
+        "elements": [
+          {
+            "type": "method",
+            "name": "__init__",
+            "qualified_name": "FileBatcher.__init__",
+            "docstring": "Initialize with file type mappings and exclusion patterns.\n\nArgs:\n    file_type_map: Dictionary mapping file types to extensions\n                   e.g., {'python': ['.py'], 'markdown': ['.md']}\n    exclude_patterns: List of glob patterns to exclude",
+            "parameters": [
+              "self",
+              "file_type_map",
+              "exclude_patterns"
+            ],
+            "returns": null,
+            "is_async": false,
+            "access": "protected",
+            "line_range": [
+              16,
+              54
+            ],
+            "content": "    def __init__(self, \n                 file_type_map: Optional[Dict[str, List[str]]] = None,\n                 exclude_patterns: Optional[List[str]] = None):\n        \"\"\"\n        Initialize with file type mappings and exclusion patterns.\n        \n        Args:\n            file_type_map: Dictionary mapping file types to extensions\n                           e.g., {'python': ['.py'], 'markdown': ['.md']}\n            exclude_patterns: List of glob patterns to exclude\n        \"\"\"\n        self.file_type_map = file_type_map or {\n            'python': ['.py'],\n            'javascript': ['.js', '.jsx', '.ts', '.tsx'],\n            'java': ['.java'],\n            'cpp': ['.cpp', '.hpp', '.cc', '.h'],\n            'markdown': ['.md', '.markdown'],\n            'pdf': ['.pdf'],\n            'json': ['.json'],\n            'csv': ['.csv'],\n            'text': ['.txt'],\n            'html': ['.html', '.htm'],\n            'xml': ['.xml'],\n        }\n        \n        # Reverse mapping for quick lookup: extension -> type\n        self.ext_to_type = {}\n        for file_type, extensions in self.file_type_map.items():\n            for ext in extensions:\n                self.ext_to_type[ext] = file_type\n                \n        self.exclude_patterns = exclude_patterns or [\n            '__pycache__', \n            '.git',\n            'node_modules',\n            'venv',\n            '.env',\n            '.DS_Store'\n        ]",
+            "decorators": [],
+            "is_static": false,
+            "is_class_method": false,
+            "is_property": false,
+            "parent_class": "FileBatcher"
+          },
+          {
+            "type": "method",
+            "name": "collect_files",
+            "qualified_name": "FileBatcher.collect_files",
+            "docstring": "Scan directory once, returning files batched by type.\n\nArgs:\n    root_dir: Root directory to scan\n    \nReturns:\n    Dictionary mapping file types to lists of file paths",
+            "parameters": [
+              "self",
+              "root_dir"
+            ],
+            "returns": null,
+            "is_async": false,
+            "access": "public",
+            "line_range": [
+              56,
+              87
+            ],
+            "content": "    def collect_files(self, root_dir: str) -> Dict[str, List[str]]:\n        \"\"\"\n        Scan directory once, returning files batched by type.\n        \n        Args:\n            root_dir: Root directory to scan\n            \n        Returns:\n            Dictionary mapping file types to lists of file paths\n        \"\"\"\n        batches = defaultdict(list)\n        \n        for dirpath, dirnames, filenames in os.walk(root_dir):\n            # Exclude directories in-place\n            dirnames[:] = [d for d in dirnames if not any(\n                fnmatch.fnmatch(os.path.relpath(os.path.join(dirpath, d), root_dir), pattern) or pattern in d\n                for pattern in self.exclude_patterns\n            )]\n\n            for fname in filenames:\n                rel_file_path = os.path.relpath(os.path.join(dirpath, fname), root_dir)\n                # Exclude files based on patterns\n                if any(fnmatch.fnmatch(rel_file_path, pattern) or fnmatch.fnmatch(fname, pattern) or pattern in fname\n                       for pattern in self.exclude_patterns):\n                    continue\n                # Get file extension and determine type\n                _, ext = os.path.splitext(fname)\n                ext = ext.lower()\n                file_type = self.ext_to_type.get(ext, 'other')\n                fpath = os.path.join(dirpath, fname)\n                batches[file_type].append(fpath)\n        return dict(batches)",
+            "decorators": [],
+            "is_static": false,
+            "is_class_method": false,
+            "is_property": false,
+            "parent_class": "FileBatcher"
+          },
+          {
+            "type": "method",
+            "name": "get_stats",
+            "qualified_name": "FileBatcher.get_stats",
+            "docstring": "Get statistics about the batched files.\n\nArgs:\n    batches: Output from collect_files()\n    \nReturns:\n    Dictionary with counts per file type and total",
+            "parameters": [
+              "self",
+              "batches"
+            ],
+            "returns": null,
+            "is_async": false,
+            "access": "public",
+            "line_range": [
+              89,
+              101
+            ],
+            "content": "    def get_stats(self, batches: Dict[str, List[str]]) -> Dict[str, int]:\n        \"\"\"\n        Get statistics about the batched files.\n        \n        Args:\n            batches: Output from collect_files()\n            \n        Returns:\n            Dictionary with counts per file type and total\n        \"\"\"\n        stats = {file_type: len(files) for file_type, files in batches.items()}\n        stats['total'] = sum(len(files) for files in batches.values())\n        return stats",
+            "decorators": [],
+            "is_static": false,
+            "is_class_method": false,
+            "is_property": false,
+            "parent_class": "FileBatcher"
+          }
+        ]
+      },
+      {
+        "type": "function",
+        "name": "collect_and_batch_files",
+        "qualified_name": "collect_and_batch_files",
+        "docstring": "Convenience function to collect and batch files from a directory.\n\nArgs:\n    root_dir: Root directory to scan\n    file_type_map: Optional mapping of file types to extensions\n    exclude_patterns: Optional list of patterns to exclude\n    \nReturns:\n    Dictionary mapping file types to lists of file paths",
+        "parameters": [
+          "root_dir",
+          "file_type_map",
+          "exclude_patterns"
+        ],
+        "returns": null,
+        "is_async": false,
+        "access": "public",
+        "line_range": [
+          104,
+          119
+        ],
+        "content": "def collect_and_batch_files(root_dir: str, \n                           file_type_map: Optional[Dict[str, List[str]]] = None,\n                           exclude_patterns: Optional[List[str]] = None) -> Dict[str, List[str]]:\n    \"\"\"\n    Convenience function to collect and batch files from a directory.\n    \n    Args:\n        root_dir: Root directory to scan\n        file_type_map: Optional mapping of file types to extensions\n        exclude_patterns: Optional list of patterns to exclude\n        \n    Returns:\n        Dictionary mapping file types to lists of file paths\n    \"\"\"\n    batcher = FileBatcher(file_type_map, exclude_patterns)\n    return batcher.collect_files(root_dir)",
+        "decorators": []
+      }
+    ]
+  }
+}

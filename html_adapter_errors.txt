@@ -1,0 +1,11 @@
+src/docproc/adapters/html_adapter.py: note: In member "extract_metadata" of class "HTMLAdapter":
+src/docproc/adapters/html_adapter.py:228: error: Incompatible types in assignment (expression has type "str | AttributeValueList | None", variable has type "str | dict[str, Any] | BeautifulSoup")  [assignment]
+src/docproc/adapters/html_adapter.py:241: error: Incompatible types in assignment (expression has type "str | AttributeValueList | None", variable has type "str | dict[str, Any] | BeautifulSoup")  [assignment]
+src/docproc/adapters/html_adapter.py:250: error: Incompatible types in assignment (expression has type "str | AttributeValueList | None", variable has type "str | dict[str, Any] | BeautifulSoup")  [assignment]
+src/docproc/adapters/html_adapter.py: note: In member "_extract_code_blocks" of class "HTMLAdapter":
+src/docproc/adapters/html_adapter.py:478: error: Item "None" of "Tag | None" has no attribute "name"  [union-attr]
+src/docproc/adapters/html_adapter.py: note: In member "_html_to_markdown" of class "HTMLAdapter":
+src/docproc/adapters/html_adapter.py:553: error: Item "PageElement" of "PageElement | Tag | NavigableString" has no attribute "find_all"  [union-attr]
+src/docproc/adapters/html_adapter.py:553: error: Item "NavigableString" of "PageElement | Tag | NavigableString" has no attribute "find_all"  [union-attr]
+src/docproc/adapters/html_adapter.py:618: error: Statement is unreachable  [unreachable]
+Found 7 errors in 1 file (checked 1 source file)

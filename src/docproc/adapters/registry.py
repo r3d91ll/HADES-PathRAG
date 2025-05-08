@@ -4,21 +4,42 @@ Registry for document format adapters.
 This module provides functionality to register and retrieve format-specific adapters.
 """
 
-from typing import Dict, Type, Optional
+from typing import Dict, Type, Optional, TypeVar, cast, Any
 from .base import BaseAdapter
 
+# Type variable for concrete adapter classes that extend BaseAdapter
+T = TypeVar('T', bound=BaseAdapter)
+
 # Registry of format adapters
-_ADAPTER_REGISTRY: Dict[str, Type[BaseAdapter]] = {}
+_ADAPTER_REGISTRY: Dict[str, Type[Any]] = {}
 
 
-def register_adapter(format_type: str, adapter_class: Type[BaseAdapter]) -> None:
+def clear_registry() -> None:
+    """
+    Clear all registered adapters from the registry.
+    
+    This is primarily useful for testing purposes.
+    """
+    global _ADAPTER_REGISTRY
+    _ADAPTER_REGISTRY = {}
+
+
+def register_adapter(format_type: str, adapter_class: Type[T]) -> None:
     """
     Register an adapter for a specific format.
     
     Args:
         format_type: Document format identifier (e.g., "pdf", "html")
-        adapter_class: Adapter class to register
+        adapter_class: Adapter class to register (concrete implementation of BaseAdapter)
+    
+    Raises:
+        ValueError: If format_type is empty or adapter_class is None
     """
+    if not format_type:
+        raise ValueError("Format type cannot be empty")
+    if adapter_class is None:
+        raise ValueError("Adapter class cannot be None")
+        
     global _ADAPTER_REGISTRY
     _ADAPTER_REGISTRY[format_type.lower()] = adapter_class
 
@@ -40,7 +61,8 @@ def get_adapter_class(format_type: str) -> Type[BaseAdapter]:
     if format_type not in _ADAPTER_REGISTRY:
         raise ValueError(f"No adapter registered for format: {format_type}")
     
-    return _ADAPTER_REGISTRY[format_type]
+    # Cast the retrieved class to Type[BaseAdapter] since we know it implements the BaseAdapter interface
+    return cast(Type[BaseAdapter], _ADAPTER_REGISTRY[format_type])
 
 
 def get_adapter_for_format(format_type: str) -> BaseAdapter:

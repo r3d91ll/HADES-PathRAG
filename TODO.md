@@ -39,6 +39,9 @@
 - [ ] Add missing components
   - [ ] Add systemd / Docker compose example to docs
   - [ ] Create helpers for non-vLLM backends (Ollama, HuggingFace)
+  - [ ] **Implement `hf_cpu_adapter.py` – a Transformers-based CPU-only model-engine adapter in `src/model_engine` and update config routing**
+  - [ ] Benchmark embedding performance with different backends
+  - [ ] Document model engine setup in docs/integration/model_engine.md
 - [ ] Benchmark embedding performance with different backends
 - [ ] Document model engine setup in `docs/integration/model_engine.md`
 

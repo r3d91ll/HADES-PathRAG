@@ -2,8 +2,8 @@
 Model configuration for HADES-PathRAG.
 
 This module defines configuration structures and default settings for model
-serving and inference in the HADES-PathRAG system, supporting multiple model
-backends (vLLM, Ollama, etc).
+serving and inference in the HADES-PathRAG system, supporting the vLLM model
+backend with extensibility for future backends.
 """
 
 import os
@@ -27,7 +27,7 @@ class ServerConfig(BaseModel):
         default="auto", description="Data type for model weights and activations"
     )
     backend: str = Field(
-        default="vllm", description="Model backend to use (vllm, ollama, etc)"
+        default="vllm", description="Model backend to use (vllm is currently supported)"
     )
     
     def to_dict(self) -> ServerConfigType:
@@ -63,7 +63,7 @@ class ModelBackendConfig(BaseModel):
     truncate_input: bool = Field(default=True, description="Whether to truncate input to fit context window")
     
     # Backend-specific settings
-    backend: str = Field(default="vllm", description="Model backend (vllm, ollama, huggingface, etc)")
+    backend: str = Field(default="vllm", description="Model backend (vllm is currently supported)")
     batch_size: int = Field(default=32, description="Batch size for processing")
     
     def to_dict(self) -> ModelBackendConfigType:

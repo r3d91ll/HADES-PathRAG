@@ -287,11 +287,17 @@ class VLLMAdapter(EmbeddingAdapter, CompletionAdapter, ChatAdapter):
 
 
 def start_vllm_server(
-    model_name: str = "BAAI/bge-large-en-v1.5",
-    port: int = 8000,
+    model_name: str,
+    port: int,
     tensor_parallel_size: int = 1,
-    gpu_memory_utilization: float = 0.8,
-    use_openai_api: bool = True
+    gpu_memory_utilization: float = 0.9,
+    max_model_len: Optional[int] = None,
+    dtype: Optional[str] = None,
+    quantization: Optional[str] = None,
+    use_openai_api: bool = True,
+    cuda_visible_devices: Optional[str] = None,
+    seed: int = 42,
+    **kwargs
 ) -> str:
     """
     Generate command to start a vLLM server.
@@ -302,16 +308,49 @@ def start_vllm_server(
         tensor_parallel_size: Number of GPUs to use in parallel
         gpu_memory_utilization: Fraction of GPU memory to use
         use_openai_api: Whether to use OpenAI-compatible API
+        max_model_len: Maximum sequence length for the model
+        quantization: Quantization method ("fp8", "int8", "int4" or None)
+        dtype: Data type for the model ("float16", "bfloat16", "float32")
+        seed: Random seed for reproducibility
+        **kwargs: Additional parameters to pass to the vLLM server
         
     Returns:
         Command string to run the server
     """
-    command_parts = [
-        "python -m vllm.entrypoints.openai.api_server" if use_openai_api else "python -m vllm.entrypoints.api_server",
-        f"--model {model_name}",
-        f"--port {port}",
-        f"--tensor-parallel-size {tensor_parallel_size}",
-        f"--gpu-memory-utilization {gpu_memory_utilization}"
-    ]
+    # Base command with required parameters
+    env_prefix = ""
+    if cuda_visible_devices is not None:
+        env_prefix = f"CUDA_VISIBLE_DEVICES={cuda_visible_devices} "
+    # If tensor_parallel_size is greater than 1 and CUDA_VISIBLE_DEVICES is not set,
+    # we need to make sure there are enough GPUs available
+    elif tensor_parallel_size > 1:
+        # Default to use all available GPUs
+        env_prefix = "" # Let vLLM handle GPU selection
     
-    return " ".join(command_parts)
+    cmd = f"{env_prefix}python -m vllm.entrypoints.openai.api_server "
+    cmd += f"--model {model_name} "
+    cmd += f"--port {port} "
+    cmd += f"--tensor-parallel-size {tensor_parallel_size} "
+    cmd += f"--gpu-memory-utilization {gpu_memory_utilization} "
+    cmd += f"--seed {seed} "
+    
+    # Add optional parameters if provided
+    if max_model_len is not None:
+        cmd += f"--max-model-len {max_model_len} "
+    
+    if quantization is not None:
+        cmd += f"--quantization {quantization} "
+
+    if dtype is not None:
+        cmd += f"--dtype {dtype} "
+
+    # Add kwargs as additional CLI arguments
+    for key, value in kwargs.items():
+        key = key.replace("_", "-")
+        if isinstance(value, bool) and value:
+            cmd += f"--{key} "
+        elif not isinstance(value, bool):
+            cmd += f"--{key} {value} "
+
+    # Return the complete command
+    return cmd

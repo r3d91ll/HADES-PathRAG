@@ -51,7 +51,7 @@ class ServerManager:
         self,
         model_alias: str,
         mode: str = "inference",
-        timeout: int = 60
+        timeout: int = 180
     ) -> bool:
         """
         Ensure a server for the specified model is running.
@@ -59,7 +59,7 @@ class ServerManager:
         Args:
             model_alias: Alias of the model from config
             mode: Mode to use the model in ("inference" or "embedding")
-            timeout: Timeout for server startup in seconds
+            timeout: Timeout for server startup in seconds (default: 180 seconds for large models)
             
         Returns:
             True if server is running, False otherwise
@@ -86,13 +86,29 @@ class ServerManager:
                 pass
         
         # Start new server
+        # If tensor_parallel_size is 1, specify a single GPU to use (GPU 0)
+        # This helps ensure consistent loading
+        cuda_visible_devices = None
+        if config.server.tensor_parallel_size == 1:
+            cuda_visible_devices = "0"  # Use first GPU by default
+        
         command = start_vllm_server(
             model_name=model_config.model_id,
             port=self.base_port,
+            # Pass model-specific context window as max_model_len
+            max_model_len=model_config.context_window,
             tensor_parallel_size=config.server.tensor_parallel_size,
             gpu_memory_utilization=config.server.gpu_memory_utilization,
+            # Add dtype and quantization from server config
+            dtype=config.server.dtype if hasattr(config.server, 'dtype') else None,
+            quantization=config.server.quantization if hasattr(config.server, 'quantization') else None,
+            cuda_visible_devices=cuda_visible_devices,
             use_openai_api=True
         )
+        
+        # Log the command for debugging
+        logging.info(f"Starting vLLM server with command: {command}")
+        
         
         # Execute command in background
         process = subprocess.Popen(

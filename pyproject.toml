@@ -21,10 +21,9 @@ python = ">=3.10,<4.0"
 # Core dependencies
 aiohttp = "^3.8.5"
 httpx = "^0.27.0"
-fastapi = "^0.100.0"
 pydantic = "^2.0.0"
 uvicorn = "^0.23.0"
-python-multipart = "^0.0.6"
+python-multipart = "^0.0.7"
 python-dotenv = "^1.0.0"
 
 # Database packages
@@ -38,12 +37,10 @@ pymongo = "^4.12.0"
 openai = "^1.0.0"
 aioboto3 = "^14.1.0"  # For AWS Bedrock and other AWS services
 
-# ML dependencies for LLM serving (vLLM to be manually installed)
-torch = ">=2.0.0"
+# ML dependencies - only what's needed for docproc
+docling = "2.31.0"
 transformers = "^4.35.0"
-accelerate = "^0.26.0"
-safetensors = "^0.4.0"
-tiktoken = "^0.5.0"  # For tokenization
+# Note: torch and torchvision will be installed by docling
 
 # Data processing and embedding
 numpy = "^1.24.0"
@@ -59,6 +56,10 @@ fastapi-jsonrpc = "^2.2.0"  # JSON-RPC support for FastAPI
 
 # Note: pytorch-geometric and nano-vectordb will need to be installed manually
 # after the basic environment is set up
+tqdm = "^4.67.1"
+coverage = "^7.8.0"
+types-pyyaml = "^6.0.12.20250402"
+types-requests = "^2.32.0.20250328"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
@@ -112,3 +113,8 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 hades-mcp-server = "src.mcp.server:main"
+
+# Type stubs
+types-networkx = "^3.4.2"
+types-tqdm = "^4.67.0"
+types-psutil = "^7.0.0"

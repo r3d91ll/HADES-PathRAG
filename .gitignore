@@ -117,3 +117,6 @@ db.sqlite3
 
 # Dead code
 .dead-code
+
+# windsurf rules
+.windsurfrules

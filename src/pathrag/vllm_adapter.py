@@ -1,8 +1,8 @@
 """
 vLLM adapter for HADES-PathRAG.
 
-This module provides adapter functions to replace Ollama functions
-with vLLM equivalents.
+This module provides adapter functions for vLLM integration,
+serving as the primary model engine implementation.
 """
 
 import aiohttp

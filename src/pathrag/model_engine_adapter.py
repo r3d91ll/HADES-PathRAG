@@ -2,7 +2,7 @@
 Model Engine adapter for HADES-PathRAG.
 
 This module provides adapter functions to connect PathRAG queries to the model_engine,
-abstracting away the specific underlying model implementations (vLLM, Ollama, etc).
+abstracting away the specific underlying model implementations (vLLM and future backends).
 """
 
 import aiohttp
