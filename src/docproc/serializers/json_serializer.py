@@ -56,21 +56,30 @@ def serialize_to_json(
     Returns:
         A dictionary with standardized structure ready for JSON serialization
     """
+    # Create the result dictionary with carefully ordered keys
+    # Start with core identifying fields
     result = {}
     
-    # Include document content (always included)
-    result["content"] = processing_result.get("content", "")
+    # First add ID, source, and format (critical metadata fields)
+    if "id" in processing_result:
+        result["id"] = processing_result["id"]
+    
+    if "source" in processing_result:
+        result["source"] = processing_result["source"]
     
     # Include format information if available
     if "format" in processing_result:
         result["format"] = processing_result["format"]
+    
+    # Add version information (early in the document)
+    if include_version:
+        result["version"] = version
         
-    # Handle entities specially to ensure standardized format
-    entities = processing_result.get("entities", [])
-    if entities:
-        result["entities"] = _make_json_serializable(entities)
-        
-    # Include document metadata if requested
+    # Add timestamp (early in the document)
+    if include_timestamp:
+        result["timestamp"] = datetime.utcnow().isoformat()
+    
+    # Include document metadata if requested - BEFORE content
     if include_metadata:
         metadata = {}
         
@@ -86,20 +95,25 @@ def serialize_to_json(
         if metadata:
             result["metadata"] = metadata
     
-    # Add version information
-    if include_version:
-        result["version"] = version
-        
-    # Add timestamp
-    if include_timestamp:
-        result["timestamp"] = datetime.utcnow().isoformat()
-        
+    # Handle entities specially to ensure standardized format - BEFORE content
+    entities = processing_result.get("entities", [])
+    if entities:
+        result["entities"] = _make_json_serializable(entities)
+    
     # Add any remaining fields that don't fit the standard structure
-    # but exclude already processed fields
-    processed_keys = {"content", "format", "entities", "metadata", "version", "timestamp", "processing_time"}
+    # but exclude already processed fields and content (which will be added last)
+    processed_keys = {"id", "source", "content", "format", "entities", "metadata", "version", "timestamp", "processing_time"}
     for key, value in processing_result.items():
         if key not in processed_keys:
             result[key] = _make_json_serializable(value)
+    
+    # Add content field LAST to ensure it appears after metadata
+    # This is critical for proper downstream processing (e.g., chunkers)
+    result["content"] = processing_result.get("content", "")
+    
+    # Include content type if available (next to content)
+    if "content_type" in processing_result:
+        result["content_type"] = processing_result["content_type"]
     
     return result
 

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-05-07 20:55:59",
+  "timestamp": "2025-05-09 08:56:56",
   "files_processed": 3,
   "results": {
     "PathRAG_paper.pdf": {
@@ -8,11 +8,11 @@
       "content_length": 64474,
       "entity_count": 0
     },
-    "langchain_docling.html": {
+    "docproc.md": {
       "success": true,
-      "format": "html",
-      "content_length": 13300,
-      "entity_count": 0
+      "format": "markdown",
+      "content_length": 7846,
+      "entity_count": 46
     },
     "file_batcher.py": {
       "success": true,

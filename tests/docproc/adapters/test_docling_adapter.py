@@ -182,6 +182,90 @@ Bob Johnson,40,Chicago""")
         self.assertEqual(result["source"], "text")
         self.assertEqual(result["format"], "html")
         self.assertIn("content", result)
+        
+    def test_process_html_with_nav_and_toc(self):
+        """Test processing HTML content with navigation elements and table of contents."""
+        # Create HTML with navigation and table of contents structure - no indentation to avoid regex issues
+        html = """<!DOCTYPE html>
+<html>
+<head>
+<title>Documentation with TOC</title>
+</head>
+<body>
+<nav>
+    <ul>
+        <li><a href="#section1">Section 1</a></li>
+        <li><a href="#section2">Section 2</a></li>
+        <li><a href="#section3">Section 3</a></li>
+    </ul>
+</nav>
+<div class="toc">
+    <h2>Table of Contents</h2>
+    <ul>
+        <li><a href="#section1">Section 1</a></li>
+        <li><a href="#section2">Section 2</a></li>
+        <li><a href="#section3">Section 3</a></li>
+    </ul>
+</div>
+<section id="section1">
+    <h2>Section 1</h2>
+    <p>Content for section 1</p>
+</section>
+<section id="section2">
+    <h2>Section 2</h2>
+    <p>Content for section 2</p>
+</section>
+<section id="section3">
+    <h2>Section 3</h2>
+    <p>Content for section 3</p>
+</section>
+</body>
+</html>"""
+        
+        # Process the HTML
+        result = self.adapter.process_text(html, {'format': 'html', 'source_url': 'https://example.com/docs'})
+        
+        # Verify common fields
+        self._verify_common_result_fields(result)
+        
+        # Check that metadata contains expected fields
+        self.assertIn("metadata", result)
+        metadata = result["metadata"]
+        
+        # Check basic metadata fields
+        self.assertEqual(metadata["format"], "html")
+        self.assertEqual(metadata["title"], "Documentation with TOC")
+        
+        # Check for navigation elements
+        self.assertIn("nav_elements", metadata)
+        self.assertTrue(isinstance(metadata["nav_elements"], list))
+        self.assertEqual(len(metadata["nav_elements"]), 3)
+        
+        # Check for table of contents
+        self.assertIn("toc", metadata)
+        self.assertTrue(isinstance(metadata["toc"], dict))
+        self.assertIn("entries", metadata["toc"])
+        self.assertEqual(len(metadata["toc"]["entries"]), 3)
+        
+        # Check for relationships
+        self.assertIn("relationships", metadata)
+        relationships = metadata["relationships"]
+        
+        # Verify LINKS_TO relationships (TOC entries -> sections)
+        links_to_relations = [r for r in relationships if r["type"] == "LINKS_TO"]
+        self.assertTrue(len(links_to_relations) > 0)
+        
+        # Verify CONTAINS relationships (TOC -> entries)
+        contains_relations = [r for r in relationships if r["type"] == "CONTAINS"]
+        self.assertTrue(len(contains_relations) > 0)
+        
+        # Verify that we have a TOC ID in the relationships
+        toc_id = metadata["toc"].get("id")
+        self.assertIsNotNone(toc_id)
+        
+        # Verify that each TOC entry has an ID
+        for entry in metadata["toc"]["entries"]:
+            self.assertIn("id", entry)
         self.assertTrue(len(result["content"]) > 0)
     
     @patch('src.docproc.adapters.docling_adapter.DocumentConverter')
@@ -318,8 +402,7 @@ Bob Johnson,40,Chicago""")
         self.assertIsInstance(result["metadata"], dict)
         self.assertIsInstance(result["entities"], list)
         
-        # Check for Docling document
-        self.assertIn("docling_document", result)
+        # No longer checking for docling_document as it's been removed
 
 
 class TestDoclingAdapterWithMocks(unittest.TestCase):
@@ -401,8 +484,7 @@ class TestDoclingAdapterWithMocks(unittest.TestCase):
                 "content_type": "markdown",
                 "format": "text",
                 "metadata": {"format": "text"},
-                "entities": [],
-                "docling_document": self.mock_doc
+                "entities": []
             }
             
             # Process text content

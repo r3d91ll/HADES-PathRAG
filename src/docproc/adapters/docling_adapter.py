@@ -1,8 +1,7 @@
 """
 Unified Docling adapter for document processing.
 
-This adapter leverages Docling's `DocumentConverter` to handle **all** formats that
-Docling can auto–detect (PDF, DOCX, PPTX, XLSX, HTML, Markdown, CSV, images, …).
+This adapter leverages Docling's `DocumentConverter` to handle PDF and markdown formats.
 The goal is to expose a single adapter that produces a normalised output
 structure identical to all other adapters in `src.docproc.adapters`.
 """
@@ -17,6 +16,8 @@ from typing import Any, Dict, List, Optional, Type, Iterator, cast, Tuple, Union
 
 from .base import BaseAdapter
 from .registry import register_adapter
+from src.docproc.utils.metadata_extractor import extract_metadata
+from ..utils.markdown_entity_extractor import extract_markdown_entities, extract_markdown_metadata
 
 __all__ = ["DoclingAdapter"]
 
@@ -37,34 +38,18 @@ __all__ = ["DoclingAdapter"]
 # Helper constants
 # ---------------------------------------------------------------------------
 
-# Map every extension we want to expose to a *format* name.  If an extension is
-# missing, we fall back to "text".
+# Simple extension to format lookup table - only supporting PDF, markdown, and Python
 EXTENSION_TO_FORMAT: Dict[str, str] = {
-    # Office / documents
+    # Documents
     ".pdf": "pdf",
-    ".docx": "docx",
-    ".pptx": "pptx",
-    ".xlsx": "xlsx",
-    ".html": "html",
-    ".htm": "html",
     ".md": "markdown",
     ".markdown": "markdown",
-    ".csv": "csv",
     ".txt": "text",
-    ".json": "json",
-    ".xml": "xml",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    # Images (handled through OCR by Docling)
-    ".png": "image",
-    ".jpg": "image",
-    ".jpeg": "image",
-    ".tif": "image",
-    ".tiff": "image",
-    ".bmp": "image",
+    # Python code files
+    ".py": "python",
 }
 
-OCR_FORMATS = {"pdf", "image"}
+OCR_FORMATS = {"pdf"}
 
 
 # ---------------------------------------------------------------------------
@@ -160,22 +145,59 @@ class DoclingAdapter(BaseAdapter):
         metadata = self._extract_metadata(doc)
         metadata.update({"format": format_name, "file_path": str(file_path)})
 
-        # Cast to appropriate type for extract_entities
-        entities = self.extract_entities(str(doc) if not isinstance(doc, dict) else doc)
+        # --- Heuristic metadata extraction and merging ---
+        # Use extracted content and format to get heuristic metadata
+        source_url = opts.get('source_url', '')
+        
+        # For markdown files, use our specialized markdown metadata extractor first
+        if format_name == "markdown":
+            markdown_metadata = extract_markdown_metadata(content, str(file_path))
+            # Merge markdown-specific metadata with existing metadata
+            for key, value in markdown_metadata.items():
+                if key not in metadata or metadata.get(key) in (None, "", "UNK"):
+                    metadata[key] = value
+        
+        # Then apply the general metadata extractor
+        heuristic_metadata = extract_metadata(content, str(file_path), format_name, source_url=source_url)
+        
+        # Merge: prefer non-UNK values from Docling, else use heuristic
+        for key, value in heuristic_metadata.items():
+            if key not in metadata or metadata.get(key) in (None, "", "UNK"):
+                metadata[key] = value
+                
+        # Always ensure required fields are present
+        for req_key in ["title", "authors", "date_published", "publisher"]:
+            if req_key not in metadata:
+                metadata[req_key] = heuristic_metadata.get(req_key, "UNK")
 
-        # Basic document structure
+        # Extract entities using default mechanism
+        entities = self._extract_entities(
+            str(doc) if not isinstance(doc, dict) else doc,
+            format_name=format_name
+        )
+        
+        # For markdown files, apply our specialized entity extraction directly to the content
+        if format_name == "markdown":
+            markdown_entities = extract_markdown_entities(content)
+            if markdown_entities:
+                # Replace entities if we found any with our specialized extractor
+                entities = markdown_entities
+        
+        # We no longer support HTML, so content is always the raw content
+        cleaned_content = content
+        
+        # Basic document structure - ensuring metadata comes before content
+        # for proper downstream processing (e.g., chunkers)
         return {
             "id": doc_id,
             "source": str(file_path),
-            "content": content,
-            "content_type": content_type,
             # Make sure the format matches what was requested in the format_name parameter
             "format": format_name,
-            "metadata": metadata,
+            "metadata": metadata,  # Place metadata BEFORE content
             "entities": entities,
-            "raw_content": content,
-            # Always include docling_document for backward compatibility with tests
-            "docling_document": str(doc)
+            "content_type": content_type,
+            "content": cleaned_content,  # Use cleaned content
+            "raw_content": content      # Keep original content for reference
         }
 
     # ------------------------------------------------------------------
@@ -231,13 +253,25 @@ class DoclingAdapter(BaseAdapter):
         return self._extract_metadata(content)
     
     # Private implementation methods
-    def _extract_entities(self, content: Any) -> List[Dict[str, Any]]:  # noqa: D401,E501
+    def _extract_entities(self, content: Any, format_name: str = "") -> List[Dict[str, Any]]:  # noqa: D401,E501
         """[INTERNAL] Extract entities from content.
         
         This is an internal implementation detail, not part of the public API.
         """
         entities: List[Dict[str, Any]] = []
-
+        
+        # For markdown files, use our specialized entity extractor
+        if format_name == "markdown":
+            if isinstance(content, str):
+                return extract_markdown_entities(content)
+            # Try to get the content as a string if it's not already
+            try:
+                content_str = str(content) if content is not None else ""
+                return extract_markdown_entities(content_str)
+            except Exception as e:
+                print(f"Error extracting markdown entities: {e}")
+                return []
+            
         # Very defensive – Docling API might change
         if hasattr(content, "pages") and callable(getattr(content, "pages", None)):
             pages = content.pages

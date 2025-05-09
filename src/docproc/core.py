@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Union, List, Callable
 
 from .utils.format_detector import detect_format_from_path
+from .utils.metadata_extractor import extract_metadata
 from .adapters.registry import get_adapter_for_format
 
 
@@ -45,7 +46,22 @@ def process_document(file_path: Union[str, Path], options: Optional[Dict[str, An
     adapter = get_adapter_for_format(format_type)
     
     # Process the document
-    return adapter.process(path_obj, options)
+    processed_doc = adapter.process(path_obj, options)
+    
+    # Enrich with metadata using our heuristic extraction
+    content = processed_doc.get("content", "")
+    metadata = extract_metadata(content, str(path_obj), format_type)
+    
+    # Merge extracted metadata with any existing metadata
+    existing_metadata = processed_doc.get("metadata", {})
+    for key, value in metadata.items():
+        if key not in existing_metadata or existing_metadata[key] == "UNK":
+            existing_metadata[key] = value
+    
+    # Update the processed document with the enriched metadata
+    processed_doc["metadata"] = existing_metadata
+    
+    return processed_doc
 
 
 def process_text(text: str, format_type: str = "text", format_or_options: Optional[Union[str, Dict[str, Any]]] = None, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -79,7 +95,23 @@ def process_text(text: str, format_type: str = "text", format_or_options: Option
     adapter = get_adapter_for_format(actual_format)
     
     # Process the text
-    return adapter.process_text(text, actual_options)
+    processed_doc = adapter.process_text(text, actual_options)
+    
+    # Enrich with metadata using our heuristic extraction
+    content = processed_doc.get("content", "")
+    source = actual_options.get("source", "direct_text")
+    metadata = extract_metadata(content, source, actual_format)
+    
+    # Merge extracted metadata with any existing metadata
+    existing_metadata = processed_doc.get("metadata", {})
+    for key, value in metadata.items():
+        if key not in existing_metadata or existing_metadata[key] == "UNK":
+            existing_metadata[key] = value
+    
+    # Update the processed document with the enriched metadata
+    processed_doc["metadata"] = existing_metadata
+    
+    return processed_doc
 
 
 def get_format_for_document(file_path: Union[str, Path]) -> str:

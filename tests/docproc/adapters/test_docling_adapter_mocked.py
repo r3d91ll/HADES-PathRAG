@@ -99,8 +99,7 @@ class TestDoclingAdapterWithMocks(unittest.TestCase):
                 "content_type": "markdown",
                 "format": "text",
                 "metadata": {"format": "text"},
-                "entities": [],
-                "docling_document": self.mock_doc
+                "entities": []
             }
             
             # Process text content

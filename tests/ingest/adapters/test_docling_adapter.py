@@ -89,7 +89,7 @@ class TestDoclingAdapter:
         assert isinstance(result, dict)
         assert result["source"] == str(file_path)
         assert result["content"] == "# Mock Markdown Document"
-        assert result["docling_document"] is not None
+        # docling_document field has been removed
         assert result["format"] == "PDF"
     
     def test_parse_with_str_path(self, adapter):

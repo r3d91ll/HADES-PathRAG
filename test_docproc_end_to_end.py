@@ -4,7 +4,7 @@ End-to-end test script for the document processing module.
 
 This script tests the document processing module with real files:
 - PDF: data/PathRAG_paper.pdf
-- HTML: data/langchain_docling.html
+- Markdown: data/docproc.md
 - Python: data/file_batcher.py
 
 The processed results are saved to the test-output/ directory.
@@ -106,7 +106,7 @@ def main():
     # Files to process
     files = [
         data_dir / "PathRAG_paper.pdf",
-        data_dir / "langchain_docling.html",
+        data_dir / "docproc.md",
         data_dir / "file_batcher.py"
     ]
     
