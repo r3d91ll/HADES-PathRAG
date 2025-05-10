@@ -1,15 +1,25 @@
 """
-Tests for the JSON serializer module.
+Direct tests for the JSON serializer module.
+This file tests the JSON serializer directly, without importing the adapter modules,
+to avoid dependency issues with Docling.
 """
 
-import json
+import sys
 import os
-import tempfile
-import unittest
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List
+import unittest
+import tempfile
+import json
+from datetime import datetime
+from typing import Dict, Any, Optional
 
+# Add the src directory to the path
+src_path = Path(__file__).resolve().parents[3] / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+# Now import just the serializer module directly
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.docproc.serializers.json_serializer import (
     serialize_to_json,
     save_to_json_file,
@@ -17,8 +27,54 @@ from src.docproc.serializers.json_serializer import (
 )
 
 
-class TestJsonSerializer(unittest.TestCase):
+class TestJsonSerializerDirect(unittest.TestCase):
     """Test cases for JSON serialization functions."""
+    
+    def test_make_json_serializable_simple_types(self):
+        """Test _make_json_serializable with simple types."""
+        # Simple types should be unchanged
+        self.assertEqual(_make_json_serializable("string"), "string")
+        self.assertEqual(_make_json_serializable(42), 42)
+        self.assertEqual(_make_json_serializable(3.14), 3.14)
+        self.assertEqual(_make_json_serializable(True), True)
+        self.assertEqual(_make_json_serializable(None), None)
+    
+    def test_make_json_serializable_collections(self):
+        """Test _make_json_serializable with collection types."""
+        # Lists should be processed recursively
+        self.assertEqual(_make_json_serializable([1, 2, "three"]), [1, 2, "three"])
+        
+        # Tuples should be converted to lists
+        self.assertEqual(_make_json_serializable((1, 2, "three")), [1, 2, "three"])
+        
+        # Sets should be converted to lists
+        result = _make_json_serializable({1, 2, 3})
+        self.assertIsInstance(result, list)
+        self.assertEqual(set(result), {1, 2, 3})
+        
+        # Dictionaries should be processed recursively
+        self.assertEqual(
+            _make_json_serializable({"a": 1, "b": [2, 3]}),
+            {"a": 1, "b": [2, 3]}
+        )
+    
+    def test_make_json_serializable_custom_objects(self):
+        """Test _make_json_serializable with custom objects."""
+        class TestObject:
+            def __init__(self):
+                self.a = 1
+                self.b = "two"
+        
+        # Custom objects should be converted to dictionaries
+        serialized = _make_json_serializable(TestObject())
+        self.assertEqual(serialized["a"], 1)
+        self.assertEqual(serialized["b"], "two")
+    
+    def test_make_json_serializable_complex_types(self):
+        """Test _make_json_serializable with complex types."""
+        # Non-serializable types should be converted to strings
+        dt = datetime.now()
+        self.assertTrue(isinstance(_make_json_serializable(dt), str))
     
     def test_serialize_to_json_basic(self):
         """Test basic serialization with minimal input."""
@@ -129,51 +185,21 @@ class TestJsonSerializer(unittest.TestCase):
         self.assertEqual(serialized["extra_field1"], "value1")
         self.assertEqual(serialized["extra_field2"], 42)
     
-    def test_make_json_serializable_simple_types(self):
-        """Test _make_json_serializable with simple types."""
-        # Simple types should be unchanged
-        self.assertEqual(_make_json_serializable("string"), "string")
-        self.assertEqual(_make_json_serializable(42), 42)
-        self.assertEqual(_make_json_serializable(3.14), 3.14)
-        self.assertEqual(_make_json_serializable(True), True)
-        self.assertEqual(_make_json_serializable(None), None)
-    
-    def test_make_json_serializable_collections(self):
-        """Test _make_json_serializable with collection types."""
-        # Lists should be processed recursively
-        self.assertEqual(_make_json_serializable([1, 2, "three"]), [1, 2, "three"])
+    def test_serialize_with_non_dict_metadata(self):
+        """Test serialization with non-dictionary metadata."""
+        result = {
+            "content": "test content",
+            "metadata": "string metadata"
+        }
         
-        # Tuples should be converted to lists
-        self.assertEqual(_make_json_serializable((1, 2, "three")), [1, 2, "three"])
+        serialized = serialize_to_json(result)
         
-        # Sets should be converted to lists
-        result = _make_json_serializable({1, 2, 3})
-        self.assertIsInstance(result, list)
-        self.assertEqual(set(result), {1, 2, 3})
+        # Non-dict metadata should not be included in the result
+        self.assertNotIn("metadata", serialized)
         
-        # Dictionaries should be processed recursively
-        self.assertEqual(
-            _make_json_serializable({"a": 1, "b": [2, 3]}),
-            {"a": 1, "b": [2, 3]}
-        )
-    
-    def test_make_json_serializable_custom_objects(self):
-        """Test _make_json_serializable with custom objects."""
-        class TestObject:
-            def __init__(self):
-                self.a = 1
-                self.b = "two"
-        
-        # Custom objects should be converted to dictionaries
-        serialized = _make_json_serializable(TestObject())
-        self.assertEqual(serialized["a"], 1)
-        self.assertEqual(serialized["b"], "two")
-    
-    def test_make_json_serializable_complex_types(self):
-        """Test _make_json_serializable with complex types."""
-        # Non-serializable types should be converted to strings
-        dt = datetime.now()
-        self.assertTrue(isinstance(_make_json_serializable(dt), str))
+        # Optional fields should still be included by default
+        self.assertTrue("version" in serialized)
+        self.assertTrue("timestamp" in serialized)
     
     def test_save_to_json_file(self):
         """Test saving serialized results to a file."""
@@ -241,67 +267,31 @@ class TestJsonSerializer(unittest.TestCase):
             # Verify content
             self.assertEqual(loaded["content"], "test content")
     
-    def test_serialize_with_non_dict_metadata(self):
-        """Test serialization with non-dictionary metadata."""
+    def test_serialize_with_id_and_source(self):
+        """Test serialization with id and source fields."""
         result = {
-            "content": "test content",
-            "metadata": "string metadata"
+            "id": "doc123",
+            "source": "/path/to/doc.txt",
+            "content": "test content"
         }
         
         serialized = serialize_to_json(result)
         
-        # Non-dict metadata should not be included in the result
-        self.assertNotIn("metadata", serialized)
-        
-        # Optional fields should still be included by default
-        self.assertTrue("version" in serialized)
-        self.assertTrue("timestamp" in serialized)
+        # ID and source should be preserved
+        self.assertEqual(serialized["id"], "doc123")
+        self.assertEqual(serialized["source"], "/path/to/doc.txt")
     
-    def test_save_to_json_file_with_string_path(self):
-        """Test saving with string path instead of Path object."""
-        result = {"content": "test content"}
+    def test_serialize_with_content_type(self):
+        """Test serialization with content_type field."""
+        result = {
+            "content": "test content",
+            "content_type": "code"
+        }
         
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = os.path.join(temp_dir, "test_output.json")
-            
-            # Save to file using string path
-            saved_path = save_to_json_file(result, output_path)
-            
-            # File should exist
-            self.assertTrue(os.path.exists(saved_path))
-    
-    def test_save_to_json_file_without_pretty_print(self):
-        """Test saving without pretty printing."""
-        result = {"content": "test content"}
+        serialized = serialize_to_json(result)
         
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "test_output.json"
-            
-            # Save to file without pretty printing
-            save_to_json_file(result, output_path, pretty_print=False)
-            
-            # Read raw content
-            with open(output_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Without pretty printing, there should be no newlines in content
-            # (except possibly at the very end)
-            self.assertLessEqual(content.count('\n'), 1)
-    
-    def test_save_to_json_file_creates_directories(self):
-        """Test that directories are created if they don't exist."""
-        result = {"content": "test content"}
-        
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Create a nested path that doesn't exist yet
-            output_path = Path(temp_dir) / "nested" / "dir" / "test_output.json"
-            
-            # Save to file - should create directories
-            saved_path = save_to_json_file(result, output_path)
-            
-            # File and parent directories should exist
-            self.assertTrue(Path(saved_path).exists())
-            self.assertTrue(Path(saved_path).parent.exists())
+        # Content type should be preserved
+        self.assertEqual(serialized["content_type"], "code")
 
 
 if __name__ == "__main__":

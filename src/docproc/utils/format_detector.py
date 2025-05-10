@@ -2,17 +2,77 @@
 Format detection utilities for document processing.
 
 This module provides functions to detect document formats based on file extension,
-content analysis, and other heuristics.
+content analysis, and other heuristics. It uses the centralized configuration system
+to determine file type mappings.
 """
 
 import os
 import re
 import mimetypes
+import logging
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Dict, List
+
+from src.config.preprocessor_config import load_config
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize mimetypes
 mimetypes.init()
+
+# Cache for file type mappings
+_extension_to_format_map: Optional[Dict[str, str]] = None
+
+
+def get_extension_to_format_map() -> Dict[str, str]:
+    """
+    Get a mapping from file extensions to format types based on configuration.
+    
+    This function loads the mapping from the central configuration and caches
+    the result for performance.
+    
+    Returns:
+        Dictionary mapping extensions to format types
+    """
+    global _extension_to_format_map
+    
+    # Use cached value if available
+    if _extension_to_format_map is not None:
+        return _extension_to_format_map
+    
+    # Load configuration
+    try:
+        config = load_config()
+        file_type_map = config["file_type_map"]
+        
+        # Build extension to format map (inverted from config)
+        extension_map: Dict[str, str] = {}
+        for format_type, extensions in file_type_map.items():
+            for ext in extensions:
+                extension_map[ext.lower()] = format_type
+        
+        logger.info(f"Loaded {len(extension_map)} file extension mappings from configuration")
+        _extension_to_format_map = extension_map
+        return extension_map
+    
+    except Exception as e:
+        # Fallback to hardcoded values if config load fails
+        logger.warning(f"Error loading format mappings from config: {e}. Using defaults.")
+        # Default fallback map (minimal set for core functionality)
+        default_map = {
+            '.pdf': 'pdf',
+            '.md': 'markdown', 
+            '.markdown': 'markdown',
+            '.py': 'python',
+            '.txt': 'text',
+            '.json': 'json',
+            '.csv': 'csv',
+            '.xml': 'xml'
+        }
+        _extension_to_format_map = default_map
+        return default_map
 
 
 def detect_format_from_path(file_path: Path) -> str:
@@ -46,36 +106,15 @@ def detect_format_from_path(file_path: Path) -> str:
             return "text"
         raise ValueError(f"Cannot determine format for file with no extension: {file_path}")
     
-    # Map extensions to format types
-    if ext == '.pdf':
-        return 'pdf'
-    elif ext in {'.html', '.htm'}:
-        return 'html'
-    elif ext == '.md':
-        return 'markdown'
-    elif ext in {'.docx', '.doc'}:
-        return 'docx'
-    elif ext == '.py':
-        return 'python'
-    elif ext == '.js':
-        return 'javascript'  # Specific format for JavaScript files
-    elif ext == '.java':
-        return 'java'  # Specific format for Java files
-    elif ext in {'.cpp', '.c', '.h', '.cs', '.go', '.rs', '.ts'}:
-        return 'code'  # Other code files
-    elif ext == '.json':
-        return 'json'
-    elif ext in {'.yaml', '.yml'}:
-        return 'yaml'
-    elif ext == '.xml':
-        return 'xml'
-    elif ext == '.csv':
-        return 'csv'
-    elif ext == '.txt':
-        return 'text'
-    elif ext == '.ipynb':
-        return 'notebook'
-    # Check for common archive formats
+    # Get extension-to-format mapping from configuration
+    extension_map = get_extension_to_format_map()
+    
+    # Check if extension is in our configured mapping
+    if ext in extension_map:
+        logger.debug(f"Found format {extension_map[ext]} for extension {ext}")
+        return extension_map[ext]
+    
+    # Check for common archive formats (special case)
     if ext in {'.gz', '.zip', '.tar', '.bz2', '.xz', '.7z', '.rar'} or \
        '.tar.' in file_path.name:  # Handle .tar.gz and similar formats
         return 'archive'

@@ -7,7 +7,12 @@ import os
 import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional, Union, List, cast
-from src.types.common import PreProcessorConfig
+from src.types.common import (
+    PreProcessorConfig,
+    MetadataExtractionConfig,
+    EntityExtractionConfig,
+    ChunkingPreparationConfig
+)
 
 # Defaults (should match those in preprocessor_config.yaml)
 DEFAULT_FILE_TYPE_MAP: Dict[str, List[str]] = {
@@ -48,6 +53,35 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 CONFIG_PATH = Path(__file__).parent / 'preprocessor_config.yaml'
+
+# Default settings for new configuration sections
+DEFAULT_METADATA_EXTRACTION = {
+    'extract_title': True,
+    'extract_authors': True,
+    'extract_date': True,
+    'use_filename_as_title': True,
+    'detect_language': True,
+}
+
+DEFAULT_ENTITY_EXTRACTION = {
+    'extract_named_entities': True,
+    'extract_technical_terms': True,
+    'min_confidence': 0.7,
+}
+
+DEFAULT_CHUNKING_PREPARATION = {
+    'add_section_markers': True,
+    'preserve_metadata': True,
+    'mark_chunk_boundaries': True,
+}
+
+# Update defaults dictionary
+DEFAULTS.update({
+    'metadata_extraction': DEFAULT_METADATA_EXTRACTION,
+    'entity_extraction': DEFAULT_ENTITY_EXTRACTION,
+    'chunking_preparation': DEFAULT_CHUNKING_PREPARATION,
+})
+
 
 def load_config(config_path: Optional[Union[str, Path]] = None) -> PreProcessorConfig:
     """
@@ -94,6 +128,25 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> PreProcessorC
                 else:
                     # Add new dictionary
                     preprocessor_config[key] = dict(value)
+    
+    # Handle the new configuration sections
+    metadata_extraction_dict = dict(DEFAULT_METADATA_EXTRACTION)
+    if 'metadata_extraction' in user_config and isinstance(user_config['metadata_extraction'], dict):
+        metadata_extraction_dict.update(user_config['metadata_extraction'])
+    # Convert to proper TypedDict
+    metadata_extraction = cast(MetadataExtractionConfig, metadata_extraction_dict)
+    
+    entity_extraction_dict = dict(DEFAULT_ENTITY_EXTRACTION)
+    if 'entity_extraction' in user_config and isinstance(user_config['entity_extraction'], dict):
+        entity_extraction_dict.update(user_config['entity_extraction'])
+    # Convert to proper TypedDict
+    entity_extraction = cast(EntityExtractionConfig, entity_extraction_dict)
+    
+    chunking_preparation_dict = dict(DEFAULT_CHUNKING_PREPARATION)
+    if 'chunking_preparation' in user_config and isinstance(user_config['chunking_preparation'], dict):
+        chunking_preparation_dict.update(user_config['chunking_preparation'])
+    # Convert to proper TypedDict
+    chunking_preparation = cast(ChunkingPreparationConfig, chunking_preparation_dict)
 
     # Build PreProcessorConfig TypedDict
     result = PreProcessorConfig(
@@ -104,6 +157,9 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> PreProcessorC
         max_workers=max_workers,
         file_type_map=file_type_map,
         preprocessor_config=preprocessor_config,
+        metadata_extraction=metadata_extraction,
+        entity_extraction=entity_extraction,
+        chunking_preparation=chunking_preparation,
         options=options,
     )
     

@@ -66,16 +66,28 @@ class RelationshipInfo(TypedDict):
 class PythonAdapter(BaseAdapter):
     """Adapter for Python source code files with AST parsing capabilities."""
 
-    def __init__(self, create_symbol_table: bool = True, options: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, create_symbol_table: Optional[bool] = None, options: Optional[Dict[str, Any]] = None) -> None:
         """Initialize the code adapter with configuration options.
         
         Args:
             create_symbol_table: Whether to create a symbol table for Python files
             options: Optional configuration options
         """
-        self.create_symbol_table = create_symbol_table
-        self.options = options or {}
-        logger.info(f"Initialized PythonAdapter with create_symbol_table={create_symbol_table}")
+        # Initialize base adapter with format type
+        super().__init__(format_type="python")
+        
+        # Get format-specific configuration with defaults
+        self.create_symbol_table = create_symbol_table if create_symbol_table is not None else self.format_config.get("create_symbol_table", True)
+        self.extract_docstrings = self.format_config.get("extract_docstrings", True)
+        self.analyze_imports = self.format_config.get("analyze_imports", True)
+        self.analyze_calls = self.format_config.get("analyze_calls", True)
+        self.extract_type_hints = self.format_config.get("extract_type_hints", True)
+        self.compute_complexity = self.format_config.get("compute_complexity", False)
+        
+        # Merge options with defaults
+        self.options = {**self.format_config, **(options or {})}
+        
+        logger.info(f"Initialized PythonAdapter with create_symbol_table={self.create_symbol_table}, analyze_calls={self.analyze_calls}")
 
     def process(self, file_path: Path, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Process a source-code file.
@@ -124,22 +136,25 @@ class PythonAdapter(BaseAdapter):
         # Extract entities
         entities = self.extract_entities(source)
         
-        # Convert to markdown (integrated from former convert_to_markdown method)
-        # Escape any existing markdown formatting in the source
-        escaped_content = source.replace("```", "\\```")
-        # Format as a code block
-        markdown_content = f"```python\n{escaped_content}\n```"
+        # We no longer convert Python code to markdown - we keep it in raw form
+        
+        # Ensure metadata has the required fields according to schema
+        if "content_type" not in metadata:
+            metadata["content_type"] = "code"  # All Python files are code
+        
+        # Set format in metadata to python since content is Python code
+        metadata["format"] = "python"  # Python content is stored as raw Python code
         
         # Basic document structure
         document: Dict[str, Any] = {
             "id": doc_id,
             "source": str(file_path),
-            "content": markdown_content,
-            "content_type": "markdown",
-            "format": "python",
-            "metadata": metadata,
-            "entities": entities,
-            "raw_content": source
+            "format": "python",  # Original document format 
+            "content": source,
+            "content_format": "python",  # How the content is stored in this JSON
+            "content_type": "code",  # Top-level content_type for primary chunking decision
+            "metadata": metadata,  # metadata.format describes the content format
+            "entities": entities
         }
         
         # Special handling for Python files

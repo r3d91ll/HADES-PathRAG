@@ -73,7 +73,31 @@ class IngestStats(TypedDict, total=False):
     status: str
 
 
+class MetadataExtractionConfig(TypedDict, total=False):
+    """Configuration for metadata extraction."""
+    extract_title: bool
+    extract_authors: bool
+    extract_date: bool
+    use_filename_as_title: bool
+    detect_language: bool
+
+
+class EntityExtractionConfig(TypedDict, total=False):
+    """Configuration for entity extraction."""
+    extract_named_entities: bool
+    extract_technical_terms: bool
+    min_confidence: float
+
+
+class ChunkingPreparationConfig(TypedDict, total=False):
+    """Configuration for preparing content for chunking."""
+    add_section_markers: bool
+    preserve_metadata: bool
+    mark_chunk_boundaries: bool
+
+
 class PreProcessorConfig(TypedDict, total=False):
+    """Complete configuration for document preprocessing."""
     input_dir: Path
     output_dir: Path
     exclude_patterns: List[str]
@@ -81,6 +105,9 @@ class PreProcessorConfig(TypedDict, total=False):
     max_workers: int
     file_type_map: Dict[str, List[str]]
     preprocessor_config: Dict[str, Dict[str, Any]]
+    metadata_extraction: MetadataExtractionConfig
+    entity_extraction: EntityExtractionConfig
+    chunking_preparation: ChunkingPreparationConfig
     options: Dict[str, Any]
 
 class NodeData(TypedDict, total=False):

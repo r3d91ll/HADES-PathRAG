@@ -100,7 +100,7 @@ def extract_markdown_metadata(content: str, file_path: str) -> Dict[str, Any]:
     Returns:
         Dictionary of extracted metadata
     """
-    metadata = {
+    metadata: Dict[str, Any] = {
         "doc_type": "markdown",
         "source": file_path
     }
@@ -117,7 +117,7 @@ def extract_markdown_metadata(content: str, file_path: str) -> Dict[str, Any]:
         r'\*\s*(.+?)\s*\*\s*$'                   # *Name* (italics at end of line)
     ]
     
-    authors = []
+    authors: List[str] = []
     for pattern in author_patterns:
         author_match = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
         if author_match:

@@ -167,6 +167,8 @@ python tools/scrape_to_md.py --crawl --depth 3 --max-pages 200 \
   --base-url http://localhost:8000/v1 \
   --api-key dummy \
   https://docs.arangodb.com/3.11/
+
+$ python ../tools/scrape_to_md.py https://docs.arangodb.com/3.11/ --crawl --depth 1 --max-pages 10 --base-url http://localhost:8345/v1 --model openai/Josiefied-Qwen3-8B-abliterated-v1 --api-key sk-fake-key --verbose --ignore-robots --prompt "Extract the title, all H2/H3 headings, every paragraph and any code blocks as markdown"
 ```
 
 ## Troubleshooting

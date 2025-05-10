@@ -62,7 +62,29 @@ class DoclingAdapter(BaseAdapter):
 
     def __init__(self, options: Optional[Dict[str, Any]] = None) -> None:
         """Initialize the DoclingAdapter with configuration options."""
-        self.options: Dict[str, Any] = options or {}
+        # Initialize base adapter - no specific format as this is a multi-format adapter
+        super().__init__()
+        
+        # Initialize options merging global settings with provided options
+        self.options: Dict[str, Any] = {**(options or {})}
+        
+        # Apply global metadata extraction settings
+        if self.metadata_config:
+            self.options.update({
+                'extract_title': self.metadata_config.get('extract_title', True),
+                'extract_authors': self.metadata_config.get('extract_authors', True),
+                'extract_date': self.metadata_config.get('extract_date', True),
+                'use_filename_as_title': self.metadata_config.get('use_filename_as_title', True),
+                'detect_language': self.metadata_config.get('detect_language', True),
+            })
+        
+        # Apply global entity extraction settings
+        if self.entity_config:
+            self.options.update({
+                'extract_named_entities': self.entity_config.get('extract_named_entities', True),
+                'extract_technical_terms': self.entity_config.get('extract_technical_terms', True),
+                'min_confidence': self.entity_config.get('min_confidence', 0.7),
+            })
         
         # Initialize the DocumentConverter - this will fail if Docling is not available
         # which is the desired behavior
@@ -143,7 +165,7 @@ class DoclingAdapter(BaseAdapter):
                 content = ""
 
         metadata = self._extract_metadata(doc)
-        metadata.update({"format": format_name, "file_path": str(file_path)})
+        metadata.update({"format": "markdown", "file_path": str(file_path)})  # Content is always markdown
 
         # --- Heuristic metadata extraction and merging ---
         # Use extracted content and format to get heuristic metadata
@@ -183,21 +205,28 @@ class DoclingAdapter(BaseAdapter):
                 # Replace entities if we found any with our specialized extractor
                 entities = markdown_entities
         
-        # We no longer support HTML, so content is always the raw content
+        # We always convert to markdown for Docling-processed content
         cleaned_content = content
+        content_type = "markdown"  # This is no longer used in the output but kept for internal reference
         
+        # Ensure metadata has the required fields according to schema
+        if "content_type" not in metadata:
+            metadata["content_type"] = "text"  # All Docling documents are fundamentally text
+        
+        # Set format in metadata to markdown since all content is converted to markdown
+        metadata["format"] = "markdown"  # All Docling content is converted to markdown
+            
         # Basic document structure - ensuring metadata comes before content
         # for proper downstream processing (e.g., chunkers)
         return {
             "id": doc_id,
             "source": str(file_path),
-            # Make sure the format matches what was requested in the format_name parameter
-            "format": format_name,
-            "metadata": metadata,  # Place metadata BEFORE content
+            "format": format_name,  # Original document format (PDF, Markdown, etc.)
+            "content_type": "text",  # Top-level content_type for primary chunking decision
+            "metadata": metadata,  # metadata.format describes the content format
             "entities": entities,
-            "content_type": content_type,
-            "content": cleaned_content,  # Use cleaned content
-            "raw_content": content      # Keep original content for reference
+            "content_format": "markdown",  # How the content is stored in this JSON
+            "content": cleaned_content  # Use cleaned content
         }
 
     # ------------------------------------------------------------------
@@ -263,11 +292,13 @@ class DoclingAdapter(BaseAdapter):
         # For markdown files, use our specialized entity extractor
         if format_name == "markdown":
             if isinstance(content, str):
-                return extract_markdown_entities(content)
+                entities = extract_markdown_entities(content)
+                return entities if entities is not None else []
             # Try to get the content as a string if it's not already
             try:
                 content_str = str(content) if content is not None else ""
-                return extract_markdown_entities(content_str)
+                entities = extract_markdown_entities(content_str)
+                return entities if entities is not None else []
             except Exception as e:
                 print(f"Error extracting markdown entities: {e}")
                 return []

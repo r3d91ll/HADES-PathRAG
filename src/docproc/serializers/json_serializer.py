@@ -7,7 +7,7 @@ results to JSON format, ensuring consistency throughout the processing pipeline.
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Union
 from pathlib import Path
 
@@ -70,6 +70,10 @@ def serialize_to_json(
     # Include format information if available
     if "format" in processing_result:
         result["format"] = processing_result["format"]
+        
+    # Include content type information if available
+    if "content_type" in processing_result:
+        result["content_type"] = processing_result["content_type"]
     
     # Add version information (early in the document)
     if include_version:
@@ -77,7 +81,7 @@ def serialize_to_json(
         
     # Add timestamp (early in the document)
     if include_timestamp:
-        result["timestamp"] = datetime.utcnow().isoformat()
+        result["timestamp"] = datetime.now(timezone.utc).isoformat()
     
     # Include document metadata if requested - BEFORE content
     if include_metadata:
