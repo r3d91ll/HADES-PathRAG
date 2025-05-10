@@ -174,6 +174,8 @@ If models fail to load, check:
 
 ### Common Errors
 
+
 - "Connection refused": The server is not running or the socket path is incorrect
 - "Out of memory": Not enough GPU memory to load the model
 - "Model not found": The specified model ID doesn't exist on Hugging Face
+

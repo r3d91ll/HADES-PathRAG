@@ -16,9 +16,11 @@ from .code_chunkers import chunk_code
 from .code_chunkers.ast_chunker import chunk_python_code
 # Text chunker (Chonky)
 from .text_chunkers.chonky_chunker import chunk_text
+from .text_chunkers.chonky_batch import chunk_text_batch
 
 __all__: list[str] = [
     "chunk_code",
     "chunk_python_code",
     "chunk_text",
+    "chunk_text_batch",
 ]

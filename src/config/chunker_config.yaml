@@ -28,7 +28,21 @@ ast:
 
 # Chonky semantic text chunker configuration
 chonky:
-  max_tokens: 2048        # Maximum tokens per chunk
-  overlap_tokens: 200     # Token overlap between chunks
-  semantic_chunking: true      # Use semantic chunking vs. static
-  preserve_structure: true     # Attempt to preserve document structure
+  # Model settings
+  model_id: "mirth/chonky_modernbert_large_1"  # Modern BERT model for improved chunking
+  model_engine: "haystack"                    # Which model engine to use (haystack, huggingface, vllm)
+  device: "cuda:0"                           # Device to load model on (cuda:0, cpu, etc.)
+  
+  # Chunking parameters
+  max_tokens: 2048                           # Maximum tokens per chunk
+  min_tokens: 64                            # Minimum tokens per chunk
+  overlap_tokens: 200                       # Token overlap between chunks
+  semantic_chunking: true                   # Use semantic chunking vs. static
+  preserve_structure: true                  # Attempt to preserve document structure
+  batch_size: 8                             # Batch size for processing multiple documents
+  
+  # Advanced settings
+  tokenizer_name: null                      # Optional custom tokenizer (defaults to model_id)
+  force_reload: false                       # Whether to force reload model even if cached
+  trust_remote_code: true                   # Whether to trust remote code when loading model
+  timeout: 30                               # Timeout in seconds for model operations

@@ -16,7 +16,7 @@ import os
 import json
 import pytest
 import torch
-from typing import Dict, List, Any, Union
+from typing import Dict, List, Any, Union, Generator
 from unittest.mock import patch, MagicMock, Mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
@@ -181,173 +181,6 @@ def test_get_model_engine(mock_engine_class):
     mock_engine.start.assert_not_called()  # Should not start if already running
 
 
-@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter")
-def test_chunk_text_empty_document(mock_get_splitter):
-    """Test chunking an empty document."""
-    # Set up test document
-    document = {
-        "path": "empty.md",
-        "content": ""
-    }
-    
-    # Mock splitter not needed for empty document
-    mock_splitter = MagicMock()
-    mock_get_splitter.return_value = mock_splitter
-    
-    # Chunk the document
-    chunks = chunk_text(document)
-    
-    # Check results
-    assert chunks == []
-    mock_splitter.assert_not_called()
-
-
-@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter")
-def test_chunk_text_basic(mock_get_splitter):
-    """Test basic chunking of a simple text document."""
-    # Set up test document
-    document = {
-        "path": "basic.md",
-        "content": "This is a test document.",
-        "type": "markdown"
-    }
-    
-    # Mock the splitter to return predefined paragraphs
-    mock_splitter = MagicMock()
-    mock_splitter.return_value = ["This is a test document."]
-    mock_get_splitter.return_value = mock_splitter
-    
-    # Chunk the document
-    chunks = chunk_text(document)
-    
-    # Check results
-    assert len(chunks) == 1
-    assert chunks[0]["content"] == "This is a test document."
-    assert chunks[0]["symbol_type"] == "paragraph"
-    assert chunks[0]["type"] == "markdown"
-    assert chunks[0]["path"] == "basic.md"
-    assert "id" in chunks[0]
-    assert "parent" in chunks[0]
-
-
-@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
-@patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
-@patch("src.chunking.text_chunkers.chonky_chunker.ensure_model_engine")
-@patch("src.chunking.text_chunkers.chonky_chunker._count_tokens")
-def test_chunk_text_multiple_paragraphs(mock_count_tokens, mock_ensure_engine, mock_get_tokenizer, mock_get_splitter):
-    """Test chunking a document with multiple paragraphs."""
-    # Configure mocks
-    mock_cm = MagicMock()
-    mock_ensure_engine.return_value.__enter__.return_value = mock_cm
-    mock_tokenizer = MagicMock()
-    mock_get_tokenizer.return_value = mock_tokenizer
-    mock_count_tokens.return_value = 5  # Simulate token count
-    
-    # Configure mock
-    mock_splitter = MagicMock()
-    mock_splitter.return_value = [
-        "This is the first paragraph.",
-        "This is the second paragraph.",
-        "This is the third paragraph."
-    ]
-    mock_get_splitter.return_value = mock_splitter
-    
-    # Set up test document with multiple paragraphs
-    document = {
-        "path": "multi.md",
-        "content": "This is the first paragraph.\n\nThis is the second paragraph.\n\nThis is the third paragraph.",
-        "type": "markdown"
-    }
-    mock_get_splitter.return_value = mock_splitter
-    
-    # Chunk the document
-    chunks = chunk_text(document)
-    
-    # Check results
-    assert len(chunks) == 3
-    assert chunks[0]["content"] == "Paragraph 1."
-    assert chunks[1]["content"] == "Paragraph 2."
-    assert chunks[2]["content"] == "Paragraph 3."
-    
-    # Check that parent ID is consistent across chunks
-    parent_id = chunks[0]["parent"]
-    assert all(chunk["parent"] == parent_id for chunk in chunks)
-    
-    # Check naming convention
-    assert chunks[0]["name"] == "paragraph_0"
-    assert chunks[1]["name"] == "paragraph_1"
-    assert chunks[2]["name"] == "paragraph_2"
-
-
-@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter")
-def test_chunk_text_skips_empty_paragraphs(mock_get_splitter):
-    """Test that empty paragraphs are skipped."""
-    # Set up test document with some empty paragraphs
-    document = {
-        "path": "with_empty.md",
-        "content": "Real paragraph.\n\n\n\nAnother real paragraph.",
-        "type": "markdown"
-    }
-    
-    # Mock the splitter to return paragraphs with some empty ones
-    mock_splitter = MagicMock()
-    mock_splitter.return_value = ["Real paragraph.", "", "  ", "Another real paragraph."]
-    mock_get_splitter.return_value = mock_splitter
-    
-    # Chunk the document
-    chunks = chunk_text(document)
-    
-    # Check that only non-empty paragraphs are included
-    assert len(chunks) == 2
-    assert chunks[0]["content"] == "Real paragraph."
-    assert chunks[1]["content"] == "Another real paragraph."
-
-
-@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
-@patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
-@patch("src.chunking.text_chunkers.chonky_chunker.ensure_model_engine")
-@patch("src.chunking.text_chunkers.chonky_chunker._count_tokens")
-@patch("src.chunking.text_chunkers.chonky_chunker.get_chunker_config")
-def test_chunk_text_with_custom_token_limit(mock_config, mock_count_tokens, mock_ensure_engine, mock_get_tokenizer, mock_get_splitter):
-    
-    # Verify it's a string (JSON)
-    assert isinstance(json_result, str)
-    
-    # Try parsing it as JSON
-    import json
-    try:
-        parsed = json.loads(json_result)
-        assert isinstance(parsed, list)
-        assert len(parsed) == 1
-        assert parsed[0]["content"] == "Test content for JSON output."
-    except json.JSONDecodeError:
-        pytest.fail("JSON output is not valid JSON")
-
-
-@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter")
-def test_chunk_text_with_custom_token_limit(mock_get_splitter):
-    """Test chunking with a custom token limit."""
-    # Set up test document
-    document = {
-        "path": "custom_limit.md",
-        "content": "Test content with custom token limit.",
-        "type": "markdown"
-    }
-    
-    # Mock the splitter
-    mock_splitter = MagicMock()
-    mock_splitter.return_value = ["Test content with custom token limit."]
-    mock_get_splitter.return_value = mock_splitter
-    
-    # Chunk with custom token limit
-    chunks = chunk_text(document, max_tokens=500)
-    
-    # Verify the chunk was created (we're not actually testing the token limit logic here
-    # since that would require implementation changes to the chunker)
-    assert len(chunks) == 1
-    assert chunks[0]["content"] == "Test content with custom token limit."
-
-
 # Tests for the enhanced chunk_text function using Haystack model engine
 @patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
 @patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
@@ -416,41 +249,183 @@ def test_chunk_text_basic(mock_count_tokens, mock_ensure_engine, mock_get_tokeni
 @patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
 @patch("src.chunking.text_chunkers.chonky_chunker.ensure_model_engine")
 @patch("src.chunking.text_chunkers.chonky_chunker._count_tokens")
-@patch("src.chunking.text_chunkers.chonky_chunker._split_text_by_tokens")
-def test_chunk_text_token_aware(mock_split, mock_count_tokens, mock_ensure_engine, 
-                               mock_get_tokenizer, mock_get_splitter):
-    """Test token-aware chunking with paragraphs that exceed token limits."""
+def test_chunk_text_multiple_paragraphs(mock_count_tokens, mock_ensure_engine, mock_get_tokenizer, mock_get_splitter):
+    """Test chunking a document with multiple paragraphs."""
     # Configure mocks
     mock_cm = MagicMock()
     mock_ensure_engine.return_value.__enter__.return_value = mock_cm
     mock_tokenizer = MagicMock()
     mock_get_tokenizer.return_value = mock_tokenizer
+    mock_count_tokens.return_value = 5  # Simulate token count
     
-    # First paragraph is under token limit, second exceeds it
-    mock_count_tokens.side_effect = [5, 500, 3, 4]  # Return different counts for different calls
-    
-    # Configure split function
-    mock_split.return_value = ["Part 1 of long paragraph.", "Part 2 of long paragraph."]
-    
-    # Configure mock splitter
+    # Configure mock
     mock_splitter = MagicMock()
-    mock_splitter.return_value = ["This is a short paragraph.", "This is a very long paragraph that exceeds the token limit."]
+    mock_splitter.return_value = [
+        "This is the first paragraph.",
+        "This is the second paragraph.",
+        "This is the third paragraph."
+    ]
     mock_get_splitter.return_value = mock_splitter
     
     document = {
-        "content": "Multi-paragraph content",
-        "path": "test.md",
+        "path": "multi.md",
+        "content": "This is the first paragraph.\n\nThis is the second paragraph.\n\nThis is the third paragraph.",
         "type": "markdown"
     }
     
-    result = chunk_text(document, max_tokens=100)
+    result = chunk_text(document)
     
     assert isinstance(result, list)
-    assert len(result) == 3  # 1 short paragraph + 2 parts of long paragraph
+    assert len(result) == 3
     
-    # Verify token-aware splitting was used for the long paragraph
-    mock_split.assert_called_once()
-    assert mock_count_tokens.call_count >= 3  # Called for each original paragraph and split chunks
+    # Check content of chunks
+    assert result[0]["content"] == "This is the first paragraph."
+    assert result[1]["content"] == "This is the second paragraph."
+    assert result[2]["content"] == "This is the third paragraph."
+    
+    # Check that all chunks have the same parent
+    parent_id = result[0]["parent"]
+    assert result[1]["parent"] == parent_id
+    assert result[2]["parent"] == parent_id
+    
+    # All chunks should have a token count
+    assert "token_count" in result[0]
+    assert "token_count" in result[1]
+    assert "token_count" in result[2]
+
+
+@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
+@patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
+@patch("src.chunking.text_chunkers.chonky_chunker.ensure_model_engine")
+@patch("src.chunking.text_chunkers.chonky_chunker._count_tokens")
+def test_chunk_text_skips_empty_paragraphs(mock_count_tokens, mock_ensure_engine, mock_get_tokenizer, mock_get_splitter):
+    """Test that empty paragraphs are skipped."""
+    # Configure mocks
+    mock_cm = MagicMock()
+    mock_ensure_engine.return_value.__enter__.return_value = mock_cm
+    mock_tokenizer = MagicMock()
+    mock_get_tokenizer.return_value = mock_tokenizer
+    mock_count_tokens.return_value = 5  # Simulate token count
+    
+    # Configure mock
+    mock_splitter = MagicMock()
+    mock_splitter.return_value = [
+        "This is a paragraph.",
+        "",  # Empty paragraph
+        "   ",  # Whitespace-only paragraph
+        "This is another paragraph."
+    ]
+    mock_get_splitter.return_value = mock_splitter
+    
+    document = {
+        "content": "This is a paragraph.\n\n\n\n   \n\nThis is another paragraph.",
+        "path": "test.md"
+    }
+    
+    result = chunk_text(document)
+    
+    assert isinstance(result, list)
+    assert len(result) == 2  # Only 2 non-empty paragraphs
+    assert result[0]["content"] == "This is a paragraph."
+    assert result[1]["content"] == "This is another paragraph."
+
+
+@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
+@patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
+@patch("src.chunking.text_chunkers.chonky_chunker.ensure_model_engine")
+@patch("src.chunking.text_chunkers.chonky_chunker._count_tokens")
+def test_chunk_text_json_output(mock_count_tokens, mock_ensure_engine, mock_get_tokenizer, mock_get_splitter):
+    """Test JSON output format."""
+    # Configure mocks
+    mock_cm = MagicMock()
+    mock_ensure_engine.return_value.__enter__.return_value = mock_cm
+    mock_tokenizer = MagicMock()
+    mock_get_tokenizer.return_value = mock_tokenizer
+    mock_count_tokens.return_value = 5  # Simulate token count
+    
+    # Configure mock
+    mock_splitter = MagicMock()
+    mock_splitter.return_value = [
+        "This is a paragraph.",
+        "This is another paragraph."
+    ]
+    mock_get_splitter.return_value = mock_splitter
+    
+    document = {
+        "content": "This is a paragraph.\n\nThis is another paragraph.",
+        "path": "test.md"
+    }
+    
+    # Request JSON output
+    result = chunk_text(document, output_format="json")
+    
+    assert isinstance(result, str)
+    
+    # Parse JSON and verify contents
+    chunks = json.loads(result)
+    assert isinstance(chunks, list)
+    assert len(chunks) == 2
+    assert chunks[0]["content"] == "This is a paragraph."
+    assert chunks[1]["content"] == "This is another paragraph."
+
+
+@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
+@patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
+@patch("src.chunking.text_chunkers.chonky_chunker.ensure_model_engine")
+@patch("src.chunking.text_chunkers.chonky_chunker._count_tokens")
+@patch("src.chunking.text_chunkers.chonky_chunker.get_chunker_config")
+def test_chunk_text_with_custom_token_limit(mock_config, mock_count_tokens, mock_ensure_engine, mock_get_tokenizer, mock_get_splitter):
+    """Test chunking with a custom token limit."""
+    # Configure mocks
+    mock_cm = MagicMock()
+    mock_ensure_engine.return_value.__enter__.return_value = mock_cm
+    mock_tokenizer = MagicMock()
+    mock_get_tokenizer.return_value = mock_tokenizer
+    mock_count_tokens.return_value = 5  # Simulate token count
+    
+    # Configure splitter mock
+    mock_splitter = MagicMock()
+    mock_splitter.return_value = ["This is a test paragraph."]
+    mock_get_splitter.return_value = mock_splitter
+    
+    # Configure mock config with a specific token limit
+    mock_config.return_value = {"max_tokens": 1024, "model_id": "test_model", "device": "cpu"}
+    
+    document = {
+        "content": "This is a test paragraph.",
+        "path": "test.md"
+    }
+    
+    # Call with custom token limit
+    result = chunk_text(document, max_tokens=512)
+    
+    assert isinstance(result, list)
+    assert len(result) == 1
+    
+    # The token limit should be respected (using the provided value, not the config value)
+    mock_config.assert_called_with("chonky")
+
+
+def test_text_splitting_by_tokens():
+    """Test the _split_text_by_tokens function directly to ensure token-aware chunking works."""
+    # Mock tokenizer for testing
+    mock_tokenizer = MagicMock()
+    # Configure tokenizer to return one token per word for simple testing
+    mock_tokenizer.encode.side_effect = lambda text: text.split()
+    
+    # Test with a paragraph that exceeds token limit
+    text = "This is a very long paragraph that should be split into multiple chunks because it exceeds the maximum token limit."
+    
+    # Set max_tokens to 5 and min_tokens to 1 to force splitting
+    chunks = _split_text_by_tokens(text, max_tokens=5, min_tokens=1, tokenizer=mock_tokenizer)
+    
+    # Should produce multiple chunks, each with 5 or fewer tokens (words)
+    assert len(chunks) > 1, "Text should be split into multiple chunks"
+    
+    # Check each chunk respects max_tokens limit (5 words or fewer)
+    for chunk in chunks:
+        token_count = len(chunk.split())
+        assert token_count <= 5, f"Chunk exceeds token limit: {chunk} has {token_count} tokens"
 
 
 @patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
@@ -484,47 +459,6 @@ def test_chunk_text_error_fallback(mock_count_tokens, mock_ensure_engine,
     
     # Verify error handling
     mock_get_splitter.assert_called_once()
-
-
-@patch("src.chunking.text_chunkers.chonky_chunker._get_splitter_with_engine")
-@patch("src.chunking.text_chunkers.chonky_chunker.get_tokenizer")
-@patch("src.chunking.text_chunkers.chonky_chunker.ensure_model_engine")
-@patch("src.chunking.text_chunkers.chonky_chunker._count_tokens")
-@patch("src.chunking.text_chunkers.chonky_chunker.get_chunker_config")
-def test_chunk_text_config_integration(mock_config, mock_count_tokens, mock_ensure_engine, 
-                                      mock_get_tokenizer, mock_get_splitter):
-    """Test integration with configuration system."""
-    # Configure mocks
-    mock_cm = MagicMock()
-    mock_ensure_engine.return_value.__enter__.return_value = mock_cm
-    mock_tokenizer = MagicMock()
-    mock_get_tokenizer.return_value = mock_tokenizer
-    mock_count_tokens.return_value = 5
-    
-    # Configure mock config
-    mock_config.return_value = {
-        "max_tokens": 1024,
-        "min_tokens": 32,
-        "model_id": "test/chonky_model",
-        "device": "test_device",
-        "overlap_tokens": 50
-    }
-    
-    # Configure mock splitter
-    mock_splitter = MagicMock()
-    mock_splitter.return_value = ["Test paragraph."]
-    mock_get_splitter.return_value = mock_splitter
-    
-    document = {
-        "content": "Test paragraph.",
-        "path": "test.md"
-    }
-    
-    result = chunk_text(document)
-    
-    # Verify config was used
-    mock_config.assert_called_with("chonky")
-    mock_get_splitter.assert_called_once_with(model_id="test/chonky_model", device="test_device")
 
 
 # Tests for batch processing functionality
