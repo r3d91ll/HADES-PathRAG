@@ -160,6 +160,7 @@ When the service is stopped, all models are unloaded and resources are freed. Th
 ### Service Not Starting
 
 If the service fails to start, check:
+
 - If the socket file already exists (`/tmp/hades_model_mgr.sock` by default)
 - If another instance of the service is already running
 - If you have sufficient permissions to create the socket file
@@ -167,6 +168,7 @@ If the service fails to start, check:
 ### Model Loading Failures
 
 If models fail to load, check:
+
 - If you have sufficient GPU memory
 - If the model ID is correct
 - If you have internet connectivity (for downloading models)
@@ -174,8 +176,6 @@ If models fail to load, check:
 
 ### Common Errors
 
-
 - "Connection refused": The server is not running or the socket path is incorrect
 - "Out of memory": Not enough GPU memory to load the model
 - "Model not found": The specified model ID doesn't exist on Hugging Face
-

@@ -4,7 +4,7 @@ This module provides batch processing functionality for the Chonky chunker,
 enabling parallel processing of multiple documents and improving throughput.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 import logging
 from multiprocessing.pool import ThreadPool
 
@@ -40,17 +40,15 @@ def chunk_text_batch(
     Union[List[List[Dict[str, Any]]], List[str]]
         List of chunk results for each document
     """
-    # Configure chunking function with proper typing based on output format
-    if output_format == "json":
-        def process_doc(doc: Dict[str, Any]) -> str:
-            result = chunk_text(doc, max_tokens=max_tokens, output_format=output_format)
+    # Define a generic process function that returns the appropriate type
+    def process_doc(doc: Dict[str, Any]) -> Union[str, List[Dict[str, Any]]]:
+        result = chunk_text(doc, max_tokens=max_tokens, output_format=output_format)
+        if output_format == "json":
             assert isinstance(result, str), "Expected string output for JSON format"
             return result
-    else:
-        def process_doc(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
-            result = chunk_text(doc, max_tokens=max_tokens, output_format=output_format)
+        else:
             assert isinstance(result, list), "Expected list output for Python format"
-            return result
+            return cast(List[Dict[str, Any]], result)
     
     if not documents:
         # Return empty list with appropriate type based on output_format
@@ -65,10 +63,10 @@ def chunk_text_batch(
             results = pool.map(process_doc, documents)
             results = list(results)
     
-    # Return the results directly - they should already be correctly typed due to our process_doc function
+    # Return the results with proper type annotation
     if output_format == "json":
-        # Type checker needs explicit casting to know these are all strings
-        return results  # type: ignore
+        # For JSON format, results are List[str]
+        return cast(List[str], results)
     else:
         # For python format, results are List[List[Dict[str, Any]]]
-        return results  # type: ignore
+        return cast(List[List[Dict[str, Any]]], results)

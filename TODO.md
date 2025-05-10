@@ -1,384 +1,297 @@
-# HADES-PathRAG Project TODO List
+# HADES-PathRAG: Pre-Embedding Model Implementation Tasks
 
-## 🚨 Priority Tasks (May 2025) - Updated: April 29th
+This document outlines the critical tasks that must be completed before proceeding with embedding model implementation. Each section contains detailed action items, implementation steps, and validation criteria.
 
-### Project Setup & Environment
+## 1. JSON Object Schema Standardization
 
-- [x] Fix Python environment setup with Poetry (requires Python 3.10+)
-- [x] Update `pyproject.toml` to properly include all direct and transitive dependencies
-- [x] Create reliable development setup script that works across environments
-- [x] Clean up project directory structure (moved obsolete docs to old-docs/)
-- [x] Fix failing tests and test infrastructure
-  - ✅ Fixed ArangoConnection initialization issues with backward compatibility
-  - ✅ Improved DoclingPreProcessor test coverage to >85%
-  - ✅ Fixed mocking in ChonkyProcessor tests
-  - ✅ Enhanced error handling in PythonPreProcessor
-- [ ] Implement ArangoDB collection management modes
-  - [ ] Add create/initialize mode to recreate collections and graph
-  - [ ] Add append mode to add documents to existing structures
-  - [ ] Update CLI with options to control database initialization behavior
+### JSONPrimary Tasks
 
-### Model Engine Integration
+- [x] Define comprehensive JSON schema using Pydantic
+- [x] Implement validation checkpoints throughout the pipeline
+- [x] Create schema versioning mechanism
 
-#### Phase 1: Foundation & Embedding (Current Priority)
+### Implementation Steps for Schema
 
-- [x] Add vLLM to project dependencies in pyproject.toml
-- [x] Install and configure vLLM locally (verified with `vllm -v` shows 0.8.4)
-- [x] Create unified model engine architecture
-  - [x] Implement abstract base classes for adapter pattern
-  - [x] Create model-agnostic configuration system
-  - [x] Refactor `src/isne/adapters/vllm_adapter.py` → `src/model_engine/adapters/vllm_adapter.py`
-  - [x] Refactor `src/pathrag/vllm_adapter.py` → `src/pathrag/model_engine_adapter.py`
-  - [x] Add server lifecycle management with `ServerManager`
-- [x] Update embedding processor to use model_engine
-- [x] Create model configuration files
-  - [x] Create `src/config/model_config.py` with Pydantic models
-  - [x] Create `src/config/model_config.yaml` with specialized models for different tasks
-- [x] Create startup helper script `scripts/start_vllm_server.py`
-- [x] Add test suite for VLLMAdapter
-- [ ] Add missing components
-  - [ ] Add systemd / Docker compose example to docs
-  - [ ] Create helpers for non-vLLM backends (Ollama, HuggingFace)
-  - [ ] **Implement `hf_cpu_adapter.py` – a Transformers-based CPU-only model-engine adapter in `src/model_engine` and update config routing**
-  - [ ] Benchmark embedding performance with different backends
-  - [ ] Document model engine setup in docs/integration/model_engine.md
-- [ ] Benchmark embedding performance with different backends
-- [ ] Document model engine setup in `docs/integration/model_engine.md`
+1. ✅ Create dedicated schema module in `src/schema/document_schema.py`
+2. ✅ Define base document schema with required fields
+3. ✅ Create specialized schemas for different document types (code, text, etc.)
+4. ✅ Add validation utilities for schema verification
+5. ✅ Implement automatic schema version upgrades
 
-#### Phase 2: Advanced LLM Integration
+### Current Status
 
-- [x] Create model engine adapter compatible with PathRAG interfaces
-- [x] Support multiple specialized models:
-  - [x] Code-specific embedding model
-  - [x] General document embedding model
-  - [x] Chunking model
-  - [x] Relationship extraction model
-  - [x] Different models for inference (default, code, pathfinder)
-- [ ] Add auto-detection of available GPU resources
-- [ ] Implement model caching and memory optimization
-- [ ] Update example scripts to use model_engine
-- [ ] Add dynamic model switching based on content type
-- [ ] Integrate vLLM with the FastAPI interface
+- Implemented `DocumentSchema`, `DocumentRelationSchema`, `DatasetSchema`, and `ChunkMetadata` Pydantic models
+- Updated to use Pydantic v2 configuration exclusively, replacing deprecated features
+- Created validation module with functions for validating documents and datasets
+- Implemented `ValidationCheckpoint` decorator for pipeline validation
+- Added `upgrade_schema_version` function for backward compatibility
+- Unit tests for schema and validation modules created
 
-### ISNE Pipeline Enhancement
+### Completed Tasks
 
-- [x] Complete ISNE integration with ingestion pipeline
-- [x] Implement path ranking according to PathRAG algorithm (70% semantic, 10% path length, 20% edge strength)
-- [x] Optimize embedding generation for code chunks
-- [x] Implement specialized embedding for inter-file relationships
-- [ ] Train or fine-tune graph neural networks for code representation
-- [ ] Scale testing with larger codebases
+- ✅ Complete and finalize unit tests for schema and validation modules
+  - ✅ Created test_document_schema.py to test all schema models
+  - ✅ Finalized test_validation.py with tests for all validation functions
+  - ✅ Added test_validation_extended.py with additional validation tests
+- ✅ Run mypy on schema modules to check for type errors
+  - ✅ Ensured all Pydantic models have proper type annotations
+  - ✅ Fixed type errors identified by mypy
+- ✅ Run test suite with coverage to ensure ≥85% coverage
+  - ✅ Achieved 93% test coverage for schema and chunking modules
+  - ✅ Added tests for edge cases and error handling
+- ✅ Integrated chunking module with schema validation
+  - ✅ Fixed MockHaystackModelEngine in integration tests
+  - ✅ Added proper type annotations to chunking modules
+  - ✅ Created integration tests for chunking and validation
 
-### Type Safety Implementation
+### Remaining Tasks
 
-- [x] Create base type definitions for core system components
-- [x] Implement type safety for FastAPI interface
-  - [x] Added Pydantic models for requests and responses
-  - [x] Fixed function signatures with proper return types
-  - [x] Created typed core system interface
-- [x] Implement type safety for pre-processor module
-  - [x] Created typed data models with TypedDict and dataclasses
-  - [x] Added proper return type annotations for all functions
-  - [x] Implemented type-safe file operations utilities
-  - [x] Built a comprehensive API with proper typing
-  - [x] Created centralized types module for the pre-processor
-  - [x] Fixed type errors in pre-processor registry with Union types
-  - [x] Properly type-annotated adapter factory functions
-- [x] Update ISNE pipeline with proper types
-  - [x] Created comprehensive type-safe data models with dataclasses
-  - [x] Implemented neural network layers with proper tensor typing
-  - [x] Built type-safe document loaders for various data sources
-  - [x] Added processors with strict typing (chunking, embedding, graph)
-  - [x] Created a fully typed pipeline orchestration interface
-- [ ] Fix integration points with consistent type definitions
-  - [x] Fixed PreprocessorManager typed interface
-  - [x] Ensured proper typing for adapter pattern classes
-  - [ ] Fix remaining docproc adapter type errors (csv, json, html adapters)
-- [ ] Add mypy configuration and pre-commit hooks
+- ✅ Integrate validation checkpoints into the ingestion pipeline
+  - ✅ Added validation to document processing pipeline in src/docproc/core.py
+  - ✅ Implemented schema validation in the document processing workflow
+  - ✅ Added error handling for validation failures with proper logging
 
-### Code Pre-Processing Pipeline
+### Validation Criteria for Schema
 
-- [x] Implement `.symbol_table` directory structure for source code metadata
-- [x] Create comprehensive documentation for ingestion system
-- [x] Refactor document ingestion pipeline with format-aware adapters
-  - [x] Replace legacy pre-processor logic with new docproc module adapters
-  - [x] Create robust adapter layer for backward compatibility
-  - [x] Implement format-aware processing for multiple file types (PDF, HTML, code, etc.)
-  - [x] Update tests with proper mocking and fixtures
-  - [x] Fix type errors in pre-processor module
-- [ ] Integrate pre-processor with main ingestion pipeline
-  - [x] Ensure compatibility with Chonky implementation
-  - [x] Prioritize text content processing with Chonky
-  - [ ] Complete full integration with semantic embedding and graph embedding phase
-  - [ ] Finalize pipeline with RepositoryIngestor after all components are ready
-- [ ] Inter-file Relationship Detection & Storage (Foundational)
-  - **Phase 0 – Design**
-    - [ ] Define edge types (IMPORTS, USES, READS_FILE, WRITES_FILE, etc.)
-    - [ ] Select AST analysis library (`astroid` preferred)
-    - [ ] Update `.symbol_table` JSON schema for new edge lists
-  - **Phase 1 – Implementation**
-    - [ ] Implement `ASTRelationExtractor` visitor class
-    - [ ] Add `collect_interfile_relations` flag to `PythonPreProcessor`
-    - [ ] Append extracted edges to pre-processing output
-  - **Phase 2 – Testing**
-    - [ ] Create mini-repo fixture (`a.py` imports `b.py`, writes a file)
-    - [ ] Unit test that `IMPORTS` & `WRITES_FILE` relations are produced
-  - **Phase 3 – Pipeline Integration**
-    - [ ] Ensure PreprocessorManager merges new relations
-    - [ ] Verify edges persisted to Arango via Repository layer
-    - [ ] Document workflow in `docs/ingestion_system.md`
-- [x] Implement Chonky-based semantic chunking (see Chonky implementation section)
-- [ ] Build graph construction module to prepare for ISNE embedding
+- All schema classes have complete type annotations
+- Schema validation catches malformed documents
+- Unit tests cover various document scenarios
+- Schema versioning handles backward compatibility
 
-### Ingestion Pipeline Optimization
+## 2. Chunking System Validation
 
-- [x] Modularize pre-processor directory by file type:
-  - [x] Extract current code to `python_pre_processor.py`
-  - [x] Create interfaces for docling pre-processor
-- [ ] Create centralized file batching system (`file_batcher.py`) to handle directory traversal once
-- [ ] Implement parallel processing via ThreadPoolExecutor for different file type batches
-- [ ] Add support for website documentation pre-processing
-- [ ] Add support for PDF document pre-processing
-- [ ] Update ingestor.py to orchestrate parallel pre-processing and ingestion
+### Completed Tasks
 
-### API Implementation
+- ✅ Create test suite for chunking validation
+  - ✅ Implemented comprehensive tests for AST code chunker
+  - ✅ Implemented comprehensive tests for Chonky text chunker
+  - ✅ Created integration tests with schema validation
+- ✅ Implement different chunking strategies
+  - ✅ Implemented code-aware chunking via AST chunker
+  - ✅ Implemented semantic chunking via Chonky chunker
+- ✅ Achieved >85% test coverage for chunking module (currently at 93%)
 
-- [x] Design and implement FastAPI interface (replacing MCP server)
-  - [x] Create core models for requests and responses
-  - [x] Implement minimal endpoints (write, query, status)
-  - [x] Document API interface and usage
-- [ ] Connect API to ArangoDB storage backend
-- [ ] Implement comprehensive error handling
-- [ ] Add authentication mechanism
-- [ ] Create client library for API interaction
+### Remaining Tasks
 
-### 🔧 Infrastructure Hardening & Logging (May 2025)
+- [ ] Validate chunking logic across additional document types
+  - [ ] Add tests for HTML documents
+  - [ ] Add tests for JSON/YAML documents
+  - [ ] Add tests for other programming languages
+- [ ] Ensure semantic coherence in chunks
+  - [ ] Implement metrics for semantic coherence
+  - [ ] Add tests that verify semantic integrity
+- [ ] Implement chunk boundary verification
+  - [ ] Add validation for context preservation
+  - [ ] Create tests for boundary edge cases
+- [ ] Create visualization tools for chunk analysis
+  - [ ] Implement chunk distribution visualizer
+  - [ ] Create chunk overlap visualization tool
 
-- [x] **ArangoDB Collection & Key Sanitisation**
-  - Context: Ensure collection names and `_key` values meet ArangoDB naming rules to prevent ingestion failures and enable CLI recreate/append modes.
-  - Deliverables:
-    - ✅ `src/storage/arango/utils.py` with `safe_name` and `safe_key`
-    - ✅ Unit tests in `tests/storage/test_utils.py`
-    - ✅ Integration into `ArangoStorage` creation and insert logic
-  - Acceptance Criteria:
-    - ✅ Ingestion pipeline creates collections/documents with arbitrary names without errors.
+### Validation Criteria for Chunking
 
-- [x] **Ingestion Pipeline Test Hardening**
-  - Context: Ensure all ingestion pipeline components have robust tests with high coverage, especially after ArangoDB API refactoring.
-  - Deliverables:
-    - ✅ Updated all repository tests to use new type-safe ArangoDB API
-    - ✅ Fixed cursor mocking and parameter extraction in tests
-    - ✅ Ensured proper error handling and type safety in tests
-    - ✅ Verified high test coverage (93% for repository code)
-  - Acceptance Criteria:
-    - ✅ All 179 ingestion pipeline tests pass
-    - ✅ Repository code has >90% test coverage
-    - ✅ Tests properly use the new type-safe API
+- Chunks maintain semantic coherence
+- Code chunks preserve function/class boundaries
+- Chunk size distribution follows expected patterns
+- Chunk overlap is consistent and appropriate
+- Test coverage ≥ 85% for chunking module
 
-- [x] **Type Safety Improvements**
-  - Context: Fix type errors in the ingestion pipeline to ensure robust type checking with mypy.
-  - Deliverables:
-    - ✅ Fixed type errors in docling_adapter.py and docling_pre_processor.py
-    - ✅ Improved handling of optional dependencies with proper type annotations
-    - ✅ Added proper type annotations for BeautifulSoup elements
-    - ✅ Updated tests to match implementation changes
-  - Acceptance Criteria:
-    - ✅ All ingestion pipeline files pass mypy type checking
-    - ✅ All 179 ingestion pipeline tests pass
-    - ✅ Optional dependencies are properly handled with graceful degradation
+## 3. Metadata Enhancement and Standardization
 
-- [ ] **Sharding & Indexing Strategy**
-  - Context: Current collections lack optimal shard keys and indexes, causing potential performance bottlenecks for large graphs.
-  - Deliverables:
-    - Config-driven shard/index parameters
-    - Automatic index creation (`symbol_path`, embeddings, etc.)
-    - Query profiling script `scripts/profile_queries.py`
-  - Acceptance Criteria:
-    - Explain plans show use of defined indexes; ingestion throughput improves (baseline-to-target KPI TBD).
+### Metadata Standardization Primary Tasks
 
-- [ ] **Robust Logging & Error Handling**
-  - Context: Missing structured logs and retries make debugging ingestion difficult.
-  - Deliverables:
-    - `src/utils/logging.py` using `structlog`
-    - Replace `print`/bare `except` with structured logs
-    - `tenacity` retry decorator for DB writes/network I/O
-  - Acceptance Criteria:
-    - Errors surface with stack traces & context; transient errors auto-retry.
+- [ ] Define comprehensive metadata schema
+- [ ] Ensure source document linkage in all chunks
+- [ ] Add position tracking (offsets) to chunks
+- [ ] Include model information in metadata
 
-- [x] **Arango Connection Refactor**
-  - Context: Replace legacy `src.db.arango_connection` with typed `src.storage.arango.connection`.
-  - Deliverables:
-    - New connection wrapper (done)
-    - Update all imports, delete `src/db`
-    - Ensure tests pass after migration
-  - Acceptance Criteria:
-    - `grep -R "src.db.arango_connection"` returns no results in src/ (done - only references in dead-code/)
+### Implementation Steps for Metadata
 
-- [✅] **AST-Based Code Chunker**
-  - Context: Deterministic chunking for source code to complement Chonky (semantic text chunker).
-  - Deliverables:
-    - ✅ Created `src/ingest/chunking/code_chunkers/ast_chunker.py` with `chunk_python_code()`
-    - ✅ Created `src/ingest/chunking/code_chunkers/__init__.py` with language dispatcher  
-    - ✅ Added `src/config/chunker_config.py` and YAML for configurable chunking
-    - ✅ Integrated chunker with `PreprocessorManager.extract_entities_and_relationships()`
-    - ✅ Moved `PreprocessorManager` from `processing/` to `pre_processor/manager.py` for better organization
-    - ✅ Created basic integration test in `tests/test_ast_chunker.py`
-    - ✅ Moved chunker implementation to `src/ingest/chunking/code_chunkers` and deprecated `src/ingest/processing`
-    - ✅ Updated all imports & tests to new package
-    - [ ] Phase-out compatibility shim once downstream code updated
-  - Acceptance Criteria:
-    - Large functions/classes split into ≤ 2048-token chunks; pipeline ingests Python repo successfully.
+1. Create metadata standardization module in `src/schema/metadata.py`
+2. Implement metadata validators and enrichers
+3. Add source tracking with unique identifiers
+4. Create utilities for metadata extraction and verification
 
-- [x] **Chonky-Based Text Chunker**
-  - Context: Handle markdown / plain-text files with semantic paragraph splitting.
-  - Deliverables:
-    - ✅ Implement `chunk_text()` in `src/ingest/chunking/text_chunkers/chonky_chunker.py`
-    - ✅ Extend dispatcher in `chunking/__init__.py` for `markdown` & `text`
-    - ✅ Unit/integration tests using sample docs
-  - Acceptance Criteria:
-    - ✅ Non-code docs are split into ≤ 2048-token chunks and ingested without errors.
+### Validation Criteria for Metadata
 
-- [-] **Embedding Layer Refactor**
-  - Context: Separate embedding concerns into `src/ingest/embedding/`.
-  - Deliverables:
-    - ISNE façade function (`embed_graph_with_isne`) implemented (done)
-    - Flag in orchestrator to run graph embeddings automatically
-    - Future sub-modules for text/vector store embeddings
-  - Acceptance Criteria:
-    - Orchestrator can run end-to-end ingestion + ISNE embedding with single flag.
+- All chunks have complete metadata
+- Source document is always traceable
+- Position information is accurate
+- Metadata format is consistent across document types
 
-### CLI Tools Reorganization
+## 4. Model Management Infrastructure
 
-- [x] **CLI Tools Reorganization**
-  - Context: Reorganize scripts into proper CLI structure with consistent interfaces
-  - Deliverables:
-    - ✅ Core implementation in `src/cli/` modules
-    - ✅ Simple executable scripts in `scripts/pathrag-*`
-    - ✅ Type-safe interfaces with proper error handling
-    - ✅ Consistent parameter naming across tools
-  - Acceptance Criteria:
-    - ✅ All CLI tools pass mypy type checking
-    - ✅ CLI tools support explicit collection management modes
+### Model Management Primary Tasks
 
-## ✅ Completed Tasks
+- [ ] Create model loading abstraction layer
+- [ ] Implement model caching mechanism
+- [ ] Develop model version tracking
+- [ ] Add resource monitoring for model usage
 
-### Project Structure
+### Implementation Steps for Model Management
 
-- ✅ Migrated HoH_parser to src/ingest/pre_processor
-- ✅ Updated package structure in pyproject.toml
-- ✅ Merged requirements for pre-processor module
-- ✅ Consolidated documentation (merged ingestion files, removed duplication)
-- ✅ Created unified README structure with clear navigation
+1. Design model manager interface in `src/model_engine/model_manager.py`
+2. Implement Haystack-based model loader
+3. Add caching with configurable memory limits
+4. Create model registry for version tracking
+5. Implement resource monitoring hooks
 
-### ArangoDB Integration
+### Validation Criteria for Model Management
 
-- ✅ Fixed ArangoConnection import issue in arango_adapter.py
-- ✅ Completed ArangoDB adapter implementation for XnX PathRAG
-- ✅ Added tests for ArangoDB integration
-- ✅ Created example script showing ArangoDB usage with PathRAG
-- ✅ Documented ArangoDB setup and configuration in docs
+- Models load and unload efficiently
+- Caching reduces redundant model loading
+- Resource usage stays within defined limits
+- Model versioning prevents inconsistencies
+- Unit tests verify model management behavior
 
-### XnX Implementation
+## 5. Pipeline Logging and Monitoring System
 
-- ✅ Implemented basic XnX traversal functions as documented
-- ✅ Added error handling to XnX traversal functions
-- ✅ Integrated XnX traversal with ArangoDB adapter
-- ✅ Set up test suite for XnX traversal validation
-- ✅ Created detailed XnX guide at `docs/xnx/XnX_README.md`
-- ✅ Documented XnX notation format and constraints
+### Logging and Monitoring Primary Tasks
 
-### API Implementation (Replacing MCP Server)
+- [ ] Implement structured logging framework
+- [ ] Add performance monitoring hooks
+- [ ] Create pipeline stage tracking
+- [ ] Develop error aggregation system
 
-- ✅ Created FastAPI implementation with core endpoints
-- ✅ Implemented Pydantic models for type-safe requests/responses
-- ✅ Documented API interface in docs/api.md
-- ✅ Created CLI interface for the API server
+### Implementation Steps for Logging
 
-### Documentation Improvements
+1. Configure structured logging in `src/utils/logging.py`
+2. Add performance monitoring decorators
+3. Implement pipeline stage tracking
+4. Create error collection and reporting mechanism
+5. Add visualization tools for log analysis
 
-- ✅ Created comprehensive ingestion_system.md documentation
-- ✅ Consolidated duplicate documentation files
-- ✅ Moved obsolete documentation to old-docs directory
-- ✅ Added cross-references between related documentation files
-- ✅ Updated project README with accurate HADES definition
+### Validation Criteria for Logging
 
-### Environment & Structure Updates (April 24th)
+- Logs capture all critical pipeline operations
+- Performance metrics are consistently tracked
+- Error reporting provides actionable information
+- Log levels are appropriately used
 
-- ✅ Updated Python version requirement to >=3.10,<4.0 in pyproject.toml
-- ✅ Organized dependencies into logical categories (core, database, LLM clients, data processing)
-- ✅ Replaced non-existent 'nan-owl' package with 'nano-vectordb'
-- ✅ Enhanced setup_dev_env.sh with better Python version validation
-- ✅ Added development dependencies for testing async code and type checking
-- ✅ Added FastAPI and related dependencies to requirements.txt
-- ✅ Removed deprecated MCP server components
+## 6. Performance Benchmarking Framework
 
-## 📋 Future Tasks
+### Benchmarking Primary Tasks
 
-### Document Processing Improvements
+- [ ] Develop benchmarking framework
+- [ ] Identify and measure pipeline bottlenecks
+- [ ] Create performance baseline
+- [ ] Implement optimization strategies
 
-- [x] Create modular symbol table implementation for Python code documents
-- [ ] Complete Docling pre-processor improvements
+### Implementation Steps for Benchmarking
 
-### Chonky Implementation for Semantic Chunking
+1. Create benchmarking utilities in `src/utils/benchmarking.py`
+2. Define key performance indicators (KPIs)
+3. Implement measurement points throughout pipeline
+4. Develop reporting mechanism for performance results
+5. Create optimization plan based on findings
 
-- [x] Document chunking strategies in chunking.md
-- [x] Implement semantic chunking using Chonky
-  - [x] Create `chonking_processor.py` as implementation of Chonky chunker
-  - [x] Update pipeline to support Chonky for non-code content
-  - [x] Create testing framework to compare chunking approaches
-  - [x] Integrate with vLLM for embedding generation
+### Validation Criteria for Benchmarking
 
-### Future Chunking Work (After Chonky Implementation)
+- Benchmark results are reproducible
+- All pipeline stages have performance metrics
+- Bottlenecks are clearly identified
+- Optimization priorities are established
 
-- [ ] Create modular symbol table implementation for markdown documents
-  - [ ] Design document-oriented structure focusing on headers, sections, and references
-  - [ ] Support named anchors and cross-document linking
-  - [ ] Ensure compatibility with different modalities (text, code, diagrams)
-- [ ] Implement code-aware chunking using symbol tables (separate from Chonky)
-- [ ] Create configurable chunking parameters
+## 7. ArangoDB Integration Enhancement
 
-- [ ] Refactor to use centralized configuration system
-  - [ ] Unify configuration across all HADES-PathRAG components
-  - [ ] Implement hierarchical configuration with inheritance
-  - [ ] Add validation and schema checking
+### ArangoDB Integration Primary Tasks
 
-### Performance Optimization
+- [ ] Define vector field schema for ArangoDB
+- [ ] Implement vector indexing strategy
+- [ ] Create collection management tools
+- [ ] Develop query utilities for vector operations
 
-- [ ] Benchmark Python implementation of XnX traversal
-- [ ] Identify critical paths for Mojo migration
-- [ ] Create Mojo implementations of core XnX algorithms
-- [ ] Implement parallel processing for path evaluations
-- [ ] Develop caching strategy for frequently accessed paths
+### Implementation Steps for ArangoDB
 
-### Model Integration
+1. Extend ArangoDB adapter in `src/db/arango_adapter.py`
+2. Define vector field specifications
+3. Implement index creation for vector fields
+4. Create utilities for vector operations
+5. Add test suite for vector operations
 
-- [ ] Implement embedding acceleration (see vLLM Integration section)
-- [ ] Implement GNN for graph traversal operations
-- [ ] Set up domain detection for model selection
-- [ ] Configure code-specific model (Qwen2.5-coder)
-- [ ] Configure general-purpose model (Llama3)
-- [ ] Develop model switching framework
+### Validation Criteria for ArangoDB
 
-### Visualization & Error Handling
+- Vector fields are properly defined
+- Indexes support efficient vector operations
+- Collection management handles vector data
+- Query performance meets requirements
+- Test coverage ≥ 85% for ArangoDB vector operations
 
-- [ ] Create web interface for HADES-PathRAG
-- [ ] Implement visualization for knowledge graph exploration
-- [ ] Add visualization of path traversal and ranking
-- [ ] Create debugging visualizations for traversal analysis
-- [ ] Create fallback strategies for common error scenarios
-- [ ] Add detailed logging for traversal operations
+## 8. Documentation and Knowledge Management
 
-## 🔍 Project Review Notes
+### Documentation Primary Tasks
 
-- Decision made to replace Ollama with vLLM for better hardware utilization, API compatibility, and model selection
-- Decision made to implement Chonky for semantic chunking of non-code content to improve retrieval quality
-- Plan to create unified embedding service using vLLM for both Chonky and ISNE
-- Phased approach: 1) Implement Chonky, 2) Integrate with pipeline, 3) Set up vLLM, 4) Testing
-- Decision made to replace MCP server with a simpler FastAPI implementation for easier maintenance and integration
-- Migrated pre-processor code needs integration with the main ingestion pipeline
-- Documentation has been consolidated and improved for better clarity and navigation
-- Type safety implementation is progressing well with focus on core components and API interfaces
-- Project environment setup is stable but test infrastructure needs improvement
-- XnX notation has been moved to experimental features while core functionality is prioritized
+- [ ] Update pipeline documentation
+- [ ] Document JSON schema and validation process
+- [ ] Create embedding strategy documentation
+- [ ] Update developer guidelines
 
-Last updated: April 29, 2025
+### Implementation Steps for Documentation
+
+1. Update README.md with current architecture
+2. Create dedicated documentation for embedding pipeline
+3. Document JSON schema with examples
+4. Create embedding strategy guide
+5. Update developer onboarding documentation
+
+### Validation Criteria for Documentation
+
+- Documentation is comprehensive and accurate
+- Examples demonstrate key concepts
+- Schema documentation includes all fields
+- Developer guidelines facilitate onboarding
+
+## 9. Testing and Quality Assurance
+
+### Testing Primary Tasks
+
+- [ ] Implement comprehensive test suite
+- [ ] Set up CI/CD pipeline for testing
+- [ ] Create integration tests for full pipeline
+- [ ] Develop testing tools for embedding validation
+
+### Implementation Steps for Testing
+
+1. Expand unit test coverage across modules
+2. Create integration tests for end-to-end validation
+3. Set up CI/CD pipeline for automated testing
+4. Implement embedding validation utilities
+5. Create test data generators
+
+### Validation Criteria for Testing
+
+- Test coverage ≥ 85% across codebase
+- All critical paths have dedicated tests
+- Integration tests validate end-to-end functionality
+- CI/CD pipeline catches regressions
+
+## 10. Pre-Launch Verification
+
+### Verification Primary Tasks
+
+- [ ] Perform end-to-end pipeline validation
+- [ ] Verify resource utilization
+- [ ] Conduct data quality assessment
+- [ ] Complete security review
+
+### Implementation Steps for Verification
+
+1. Create validation script for end-to-end testing
+2. Implement resource monitoring for full pipeline
+3. Develop data quality metrics and validation
+4. Conduct security review of pipeline
+
+### Validation Criteria for Verification
+  
+- Pipeline functions end-to-end without errors
+- Resource utilization is within acceptable limits
+- Data quality meets defined standards
+- Security considerations are addressed
+
+## Next Steps After Completion
+
+Once all these tasks are completed and validated, we can proceed with confidence to:
+
+1. Implement the embedding model integration
+2. Scale the system for production usage
+3. Optimize the pipeline for specific use cases
+4. Enhance the system with advanced features
