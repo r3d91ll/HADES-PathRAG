@@ -60,7 +60,7 @@ This document outlines the critical tasks that must be completed before proceedi
 
 ## 2. Chunking System Validation
 
-### Completed Tasks
+### Completed Chunking Tasks
 
 - ✅ Create test suite for chunking validation
   - ✅ Implemented comprehensive tests for AST code chunker
@@ -71,21 +71,22 @@ This document outlines the critical tasks that must be completed before proceedi
   - ✅ Implemented semantic chunking via Chonky chunker
 - ✅ Achieved >85% test coverage for chunking module (currently at 93%)
 
-### Remaining Tasks
+### Remaining Chunking Tasks
 
-- [ ] Validate chunking logic across additional document types
-  - [ ] Add tests for HTML documents
-  - [ ] Add tests for JSON/YAML documents
-  - [ ] Add tests for other programming languages
+- [ ] Validate chunking logic across all supported document types
+  - [ ] Add tests for PDF documents via Docling
+  - [ ] Add tests for TXT documents
+  - [ ] Add tests for CSV, XML, JSON, YAML, and TOML documents
 - [ ] Ensure semantic coherence in chunks
-  - [ ] Implement metrics for semantic coherence
-  - [ ] Add tests that verify semantic integrity
+  - [ ] Implement metrics for semantic coherence using Chonky
+  - [ ] Add tests that verify semantic integrity of chunks
 - [ ] Implement chunk boundary verification
-  - [ ] Add validation for context preservation
+  - [ ] Add validation for context preservation in text chunks
+  - [ ] Add validation for function/class boundary preservation in code chunks
   - [ ] Create tests for boundary edge cases
 - [ ] Create visualization tools for chunk analysis
-  - [ ] Implement chunk distribution visualizer
-  - [ ] Create chunk overlap visualization tool
+  - [ ] Implement chunk distribution visualizer for token distribution
+  - [ ] Create chunk overlap visualization tool for semantic overlap
 
 ### Validation Criteria for Chunking
 
