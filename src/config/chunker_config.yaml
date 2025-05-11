@@ -41,6 +41,24 @@ chonky:
   preserve_structure: true                  # Attempt to preserve document structure
   batch_size: 8                             # Batch size for processing multiple documents
   
+  # Overlap context settings
+  overlap_context:
+    enabled: true                           # Whether to use the new overlap context structure
+    store_pre_context: true                 # Store text before the chunk
+    store_post_context: true                # Store text after the chunk
+    max_pre_context_chars: 1000             # Maximum characters for pre-context
+    max_post_context_chars: 1000            # Maximum characters for post-context
+    store_position_info: true               # Store position information for precise reconstruction
+  
+  # Cache settings
+  cache_with_device: true                   # Whether to include device in cache key
+  cache_size: 4                             # Number of models to keep in cache
+  
+  # Model engine settings
+  early_availability_check: true            # Check model engine availability at module initialization
+  auto_start_engine: true                   # Automatically try to start the engine if not running
+  max_startup_retries: 3                    # Maximum number of retries when starting the engine
+  
   # Advanced settings
   tokenizer_name: null                      # Optional custom tokenizer (defaults to model_id)
   force_reload: false                       # Whether to force reload model even if cached

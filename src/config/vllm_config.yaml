@@ -17,6 +17,7 @@ ingestion:
   # These embeddings are then used as input features for the ISNE GNN
   embedding:
     model_id: BAAI/bge-large-en-v1.5
+    port: 8123  # Base port for embedding model
     max_tokens: 512
     context_window: 4096
     truncate_input: true
@@ -26,6 +27,7 @@ ingestion:
   # Note: Chonky only performs chunking and does NOT create embeddings
   chunking:
     model_id: mirth/chonky_modernbert_large_1
+    port: 8124  # Dedicated port for chunking model
     max_tokens: 1024
     temperature: 0.2
     top_p: 0.9
@@ -37,6 +39,7 @@ ingestion:
   # Used to extract relationships between documents if not already defined
   relationship:
     model_id: Qwen/Qwen2.5-7B-Instruct
+    port: 8125  # Dedicated port for relationship model
     max_tokens: 1024
     temperature: 0.1
     top_p: 0.95
@@ -53,6 +56,7 @@ inference:
   # Default general-purpose model
   general:
     model_id: unsloth/Qwen3-14B
+    port: 8130  # Dedicated port for general model
     max_tokens: 2048
     temperature: 0.7
     top_p: 0.9
@@ -63,6 +67,7 @@ inference:
   # Code-specific model for programming tasks
   code:
     model_id: Qwen/Qwen2.5-72B-Coder
+    port: 8131  # Dedicated port for code model
     max_tokens: 4096
     temperature: 0.2
     top_p: 0.95
@@ -73,6 +78,7 @@ inference:
   # Fast model for quick responses when appropriate
   fast:
     model_id: Qwen/Qwen2.5-7B
+    port: 8132  # Dedicated port for fast model
     max_tokens: 1024
     temperature: 0.8
     top_p: 0.9

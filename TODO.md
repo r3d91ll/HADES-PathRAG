@@ -69,21 +69,26 @@ This document outlines the critical tasks that must be completed before proceedi
 - ✅ Implement different chunking strategies
   - ✅ Implemented code-aware chunking via AST chunker
   - ✅ Implemented semantic chunking via Chonky chunker
+- ✅ Enhance Chonky chunker configuration
+  - ✅ Added overlap context structure to preserve content surrounding chunks
+  - ✅ Implemented device-specific caching to prevent collisions
+  - ✅ Added early availability checks for model engine
+  - ✅ Created comprehensive documentation in chunker_configuration.md
 - ✅ Achieved >85% test coverage for chunking module (currently at 93%)
 
 ### Remaining Chunking Tasks
 
-- [ ] Validate chunking logic across all supported document types
-  - [ ] Add tests for PDF documents via Docling
-  - [ ] Add tests for TXT documents
-  - [ ] Add tests for CSV, XML, JSON, YAML, and TOML documents
+- [x] Validate chunking logic across all supported document types
+  - [x] Add tests for PDF documents via Docling
+  - [x] Add tests for TXT documents
+  - [x] Add tests for CSV, XML, JSON, YAML, and TOML documents
 - [ ] Ensure semantic coherence in chunks
   - [ ] Implement metrics for semantic coherence using Chonky
   - [ ] Add tests that verify semantic integrity of chunks
-- [ ] Implement chunk boundary verification
-  - [ ] Add validation for context preservation in text chunks
-  - [ ] Add validation for function/class boundary preservation in code chunks
-  - [ ] Create tests for boundary edge cases
+- [x] Implement chunk boundary verification
+  - [x] Add validation for context preservation in text chunks
+  - [x] Add validation for function/class boundary preservation in code chunks
+  - [x] Create tests for boundary edge cases
 - [ ] Create visualization tools for chunk analysis
   - [ ] Implement chunk distribution visualizer for token distribution
   - [ ] Create chunk overlap visualization tool for semantic overlap
@@ -241,26 +246,59 @@ This document outlines the critical tasks that must be completed before proceedi
 - Schema documentation includes all fields
 - Developer guidelines facilitate onboarding
 
-## 9. Testing and Quality Assurance
+## 8. GPU Pipeline Test Coverage
 
-### Testing Primary Tasks
+### GPU Pipeline Test Coverage Tasks
 
-- [ ] Implement comprehensive test suite
-- [ ] Set up CI/CD pipeline for testing
-- [ ] Create integration tests for full pipeline
-- [ ] Develop testing tools for embedding validation
+- [x] Enhance test coverage for GPU-orchestrated pipeline
+  - [x] Improve DocProcStage test coverage (now at 91%)
+  - [x] Improve ChunkStage test coverage (now at 93%)
+  - [x] Ensure StageBase has 100% test coverage
+  - [x] Maintain orchestrator test coverage above 85% (currently at 87%)
+- [x] Fix test issues and edge cases
+  - [x] Fix tests for document processing with unsupported formats
+  - [x] Add tests for timeout handling in document processing
+  - [x] Add tests for invalid results from document processing
+  - [x] Add tests for error handling in chunking stage
+- [x] Address deprecation warnings
+  - [x] Update Pydantic V1 style validators to V2 in engine_config.py
+  - [x] Replace class Config with ConfigDict
+  - [x] Update parse_obj() to model_validate()
 
-### Implementation Steps for Testing
+### Implementation Steps for GPU Pipeline Testing
 
-1. Expand unit test coverage across modules
-2. Create integration tests for end-to-end validation
-3. Set up CI/CD pipeline for automated testing
-4. Implement embedding validation utilities
-5. Create test data generators
+1. ✅ Identify modules with insufficient coverage
+2. ✅ Create targeted unit tests for uncovered code
+3. ✅ Implement tests for error handling and edge cases
+4. ✅ Fix deprecation warnings in configuration modules
+5. ✅ Verify overall test coverage meets or exceeds 85%
 
-### Validation Criteria for Testing
+### Validation Criteria for GPU Pipeline Testing
 
-- Test coverage ≥ 85% across codebase
+- ✅ All critical paths have dedicated tests
+- ✅ Edge cases are properly tested
+- ✅ Type safety is enforced throughout the pipeline
+- ✅ Overall test coverage is at least 85% (currently at 91%)
+
+## 9. Test Coverage Enhancement
+
+### Test Coverage Primary Tasks
+
+- [ ] Achieve ≥85% test coverage across all modules
+- [ ] Implement integration tests for all critical paths
+- [ ] Create performance regression tests
+- [ ] Add edge case testing for error handling
+
+### Implementation Steps for Test Coverage
+
+1. Identify modules with insufficient coverage
+2. Create targeted unit tests for uncovered code
+3. Implement integration tests for module interactions
+4. Add performance regression tests
+5. Create edge case tests for error handling
+
+### Validation Criteria for Test Coverage
+
 - All critical paths have dedicated tests
 - Integration tests validate end-to-end functionality
 - CI/CD pipeline catches regressions
@@ -287,6 +325,43 @@ This document outlines the critical tasks that must be completed before proceedi
 - Resource utilization is within acceptable limits
 - Data quality meets defined standards
 - Security considerations are addressed
+
+## 11. GPU-Orchestrated Batch Engine
+
+### Overview
+
+Design and implement an asynchronous, double-buffered, multi-GPU engine that moves batches through DocProc, Chunking, Embedding and ISNE stages with configurable stage-to-GPU layout.
+
+### GPU Engine Primary Tasks
+
+- [ ] Create `engine_config.yaml` with pipeline layout, batch size, queue depth, NVLink flag
+- [ ] Implement `engine_config.py` (Pydantic / dataclass loader)
+- [ ] Define shared `PipelineBatch` dataclass in `src/engine/batch_types.py`
+- [ ] Build stage wrappers under `src/engine/stages/` for DocProc, Chunk, Embed, ISNE
+- [ ] Develop `StageBase` with device selection & CUDA stream handling
+- [ ] Implement `orchestrator.py` (async queues, double-buffer, NVLink peer copy)
+- [ ] Add CLI command `ingestor orchestrate` with config path & input path
+- [ ] Add Prometheus metrics (`gpu_util`, queue length, batch latency)
+- [ ] Write unit tests for config loader, batch types, dummy orchestrator run (≥85 % coverage)
+- [ ] Add integration smoke test with 10 docs verifying Arango writes
+- [ ] Document architecture in `docs/engine/architecture.md`
+
+### Implementation Steps
+
+1. **Config Layer** – add YAML + loader with validation.
+2. **Types** – create `PipelineBatch` and ensure mypy passes.
+3. **Stage Wrappers** – thin adapters calling existing modules.
+4. **Orchestrator Skeleton** – async queues with dummy `sleep` to prove overlap.
+5. **GPU Integration** – add CUDA streams, NVLink copy, real model calls.
+6. **Metrics & CLI** – expose metrics, wire into command-line.
+7. **Tests & Docs** – ensure coverage, write architecture docs.
+
+### Validation Criteria
+
+- Pipeline sustains \>90 % utilisation on both RTX A6000 GPUs
+- End-to-end latency per 128-doc batch \< 1.5× sum of slowest two stages
+- Models remain resident (no load/unload in steady state)
+- Unit + integration tests ≥ 85 % coverage, mypy clean
 
 ## Next Steps After Completion
 

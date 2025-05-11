@@ -16,11 +16,11 @@ Features:
 """
 
 from typing import Any, Dict, List, Optional, Union, Tuple, Generator, Callable
-import hashlib
 import uuid
 import logging
 import json
 import os
+import hashlib
 import torch
 from functools import lru_cache
 from multiprocessing.pool import ThreadPool
@@ -49,31 +49,128 @@ logger = logging.getLogger(__name__)
 
 # Initialize global model engine and tokenizer
 _MODEL_ENGINE: Optional[HaystackModelEngine] = None
-_TOKENIZER: Any = None
+_TOKENIZER = None
 _SPLITTER_CACHE: Dict[str, ParagraphSplitter] = {}
+
+# Disable mypy for this function since it has complex type checking
+# mypy: disable-error-code="unreachable"
+def _check_model_engine_availability() -> bool:
+    """Check if the model engine is available at module initialization.
+    
+    Returns:
+        bool: True if the model engine is available, False otherwise
+    """
+    # Get chunker config to check if early availability check is enabled
+    config = get_chunker_config('chonky')
+    if not config.get('early_availability_check', True):
+        logger.debug("Early model engine availability check disabled by configuration")
+        return False
+        
+    try:
+        # Use the existing HaystackModelEngine class
+        engine = HaystackModelEngine()
+        
+        # Get status and check if engine is running
+        try:
+            status_dict = engine.status()
+            if not status_dict:
+                logger.warning("Empty status response from model engine")
+                return False
+                
+            # Check running status if status_dict is a dict
+            if isinstance(status_dict, dict) and status_dict.get("running") is True:
+                return True
+        except Exception as status_err:
+            logger.warning("Error getting model engine status: %s", status_err)
+            return False
+        
+        # Check if auto-start is enabled
+        if not config.get('auto_start_engine', True):
+            logger.info("Auto-start disabled by configuration, not starting model engine")
+            return False
+            
+        # Engine is not running, try to start it
+        logger.info("Haystack model engine not running, attempting to start...")
+        
+        # Get max retry count from config
+        max_retries = config.get('max_startup_retries', 3)
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                result = engine.start()
+                
+                # Check if start was successful
+                if isinstance(result, dict) and result.get("status") == "ok":
+                    logger.info("Successfully started Haystack model engine")
+                    return True
+                    
+                logger.warning("Failed to start Haystack model engine (attempt %d/%d): %s", 
+                              retry_count + 1, max_retries, result)
+                retry_count += 1
+            except Exception as start_err:
+                logger.warning("Error starting model engine (attempt %d/%d): %s", 
+                              retry_count + 1, max_retries, start_err)
+                retry_count += 1
+                
+        logger.error("Failed to start Haystack model engine after %d attempts", max_retries)
+        return False
+    except Exception as e:
+        logger.warning("Error checking model engine availability: %s", e)
+        return False
+
+# Run availability check at module initialization
+_ENGINE_AVAILABLE = _check_model_engine_availability()
 
 
 def get_model_engine() -> HaystackModelEngine:
-    """Get the global model engine instance, initializing if necessary."""
+    """Get the global model engine instance, initializing if necessary.
+    
+    Returns:
+        HaystackModelEngine: The initialized model engine
+    """
     global _MODEL_ENGINE  # pylint: disable=global-statement
     if _MODEL_ENGINE is None:
         _MODEL_ENGINE = HaystackModelEngine()
         # Start the service if not already running
-        if not _MODEL_ENGINE.status().get("running", False):
+        status = _MODEL_ENGINE.status()
+        is_running = False
+        if isinstance(status, dict):
+            is_running = status.get("running", False)
+        if not is_running:
             logger.info("Starting Haystack model engine service")
             _MODEL_ENGINE.start()
     return _MODEL_ENGINE
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=4)
 def get_tokenizer(model_id: str) -> Any:
-    """Get a tokenizer for the specified model ID with caching."""
+    """Get a tokenizer for the specified model ID with caching.
+    
+    Args:
+        model_id: The model ID to load the tokenizer for
+        
+    Returns:
+        The loaded tokenizer
+        
+    Raises:
+        ImportError: If transformers package is not installed
+        RuntimeError: If tokenizer fails to load
+    """
     if AutoTokenizer is None:
         raise ImportError(
             "Package 'transformers' is required for token counting.\n"
             "Install with:  pip install transformers"
         )
-    return AutoTokenizer.from_pretrained(model_id)
+    
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        if tokenizer is None:
+            raise RuntimeError(f"Failed to load tokenizer for model {model_id}")
+        return tokenizer
+    except Exception as e:
+        logger.error(f"Error loading tokenizer for model {model_id}: {e}")
+        raise RuntimeError(f"Failed to load tokenizer for model {model_id}: {e}") from e
 
 
 def _count_tokens(text: str, tokenizer: Any) -> int:
@@ -170,16 +267,34 @@ def _split_text_by_tokens(text: str, max_tokens: int, min_tokens: int,
     return chunks
 
 
-def _get_splitter_with_engine(model_id: str = "mirth/chonky_modernbert_large_1", 
-                             device: str = "cuda:0") -> ParagraphSplitter:
-    """Get a Chonky paragraph splitter using the Haystack model engine.
+def _get_splitter_with_engine(model_id: str, device: str = "cuda") -> ParagraphSplitter:
+    """Get a Chonky ParagraphSplitter using the Haystack model engine.
     
-    This implementation uses the configured model engine to load the model,
-    leveraging our model caching and resource management.
+    This function ensures the model is loaded in the Haystack engine and
+    returns a ParagraphSplitter configured to use it.
+    
+    Args:
+        model_id: The model ID to load
+        device: The device to use (e.g., "cuda", "cpu")
+        
+    Returns:
+        A configured ParagraphSplitter instance
+        
+    Raises:
+        RuntimeError: If the model fails to load
     """
-    # Use cache to avoid re-creating splitters
-    cache_key = f"{model_id}_{device}"
+    # Get chunker config to check if device-specific caching is enabled
+    config = get_chunker_config('chonky')
+    cache_with_device = config.get('cache_with_device', True)
+    
+    # Create cache key based on configuration
+    if cache_with_device:
+        cache_key = f"{model_id}_{device}"    
+    else:
+        cache_key = model_id
+        
     if cache_key in _SPLITTER_CACHE:
+        logger.debug("Using cached ParagraphSplitter for %s", cache_key)
         return _SPLITTER_CACHE[cache_key]
     
     # Get model engine and ensure it's running
@@ -229,20 +344,47 @@ def ensure_model_engine() -> Generator[HaystackModelEngine, None, None]:
 
 def chunk_text(
     document: Dict[str, Any], *, max_tokens: int = 2048, output_format: str = "python"
-) -> Union[List[Dict[str, Any]], str]:  # noqa: D401
-    """Split plain-text/Markdown document into semantic paragraphs using Chonky.
-
-    Parameters
-    ----------
-    document:
-        Pre-processed document dict. Must contain ``content`` and ``path`` keys.
-    max_tokens:
-        Token budget for each chunk (default comes from config).
-    output_format:
-        Output format of the chunks. Can be either "python" or "json".
-
-    Returns
-    -------
+) -> Union[List[Dict[str, Any]], str]:
+    """Chunk a text document into semantic paragraphs using Chonky.
+    
+    This function processes a text document and splits it into semantic chunks using the Chonky
+    neural chunking model. It preserves the original text casing and formatting while identifying
+    natural paragraph and section boundaries.
+    
+    The function supports two modes of operation:
+    1. With Chonky model engine: Uses neural-based semantic chunking
+    2. Fallback mode: Uses basic paragraph splitting if Chonky is unavailable
+    
+    Configuration is loaded from src/config/chunker_config.yaml and can be customized to control
+    chunking behavior, overlap context, caching, and model engine settings.
+    
+    Args:
+        document: Document dictionary with the following keys:
+            - content: The text content of the document
+            - path: Path to the document (used for ID generation)
+            - type: Document type (e.g., "markdown", "text")
+        max_tokens: Maximum tokens per chunk (default: 2048)
+        output_format: Output format, either "python" for Python objects or "json" for JSON string
+        
+    Returns:
+        If output_format is "python": List of chunk dictionaries with the following structure:
+            - id: Unique chunk ID
+            - parent: Parent document ID
+            - path: Document path
+            - type: Document type
+            - content: Original chunk text
+            - overlap_context: Dictionary with pre/post context and position information
+            - symbol_type: Always "paragraph" for text chunks
+            - name: Paragraph identifier (e.g., "paragraph_0")
+            - line_start/line_end: Always 0 for text chunks
+            - token_count: Number of tokens in the chunk
+            - content_hash: MD5 hash of the content
+            - embedding: None (placeholder for future embedding)
+        If output_format is "json": JSON string representation of the above
+        
+    Raises:
+        ValueError: If document is missing required fields or has invalid content
+        RuntimeError: If there are issues with the model engine (will fall back to basic chunking)
     Union[List[Dict[str, Any]], str]
         List of chunk dictionaries or JSON string, depending on output_format
     """
@@ -279,9 +421,46 @@ def chunk_text(
             logger.debug("Running Chonky paragraph splitter on %s", path)
             paragraphs: List[str] = list(splitter(source))
             
-            # Apply token-aware splitting to handle long paragraphs
+            # Track the character positions in the original text
+            original_text = source
+            boundaries = []
+            current_pos = 0
+            
+            # Initialize the list to store processed paragraphs for fallback cases
             processed_paragraphs: List[str] = []
+            
+            # Find the boundaries of each paragraph in the original text
             for para in paragraphs:
+                if not para.strip():
+                    continue
+                
+                # Normalize the paragraph text for comparison (lowercase)
+                para_lower = para.lower()
+                
+                # Find this paragraph in the original text
+                # Start searching from the current position to handle repeated text
+                search_pos = original_text.lower().find(para_lower, current_pos)
+                
+                if search_pos >= 0:
+                    # Found the paragraph in the original text
+                    start_pos = search_pos
+                    end_pos = start_pos + len(para)
+                    boundaries.append((start_pos, end_pos))
+                    current_pos = end_pos
+                else:
+                    # Fallback: use the Chonky output if we can't find the exact match
+                    logger.warning("Could not find exact match for paragraph in original text, using Chonky output")
+                    processed_paragraphs.append(para)
+                    continue
+            
+            # Extract the original text using the boundaries
+            original_paragraphs = [original_text[start:end] for start, end in boundaries]
+            
+            # Reset processed_paragraphs for token-aware splitting
+            processed_paragraphs = []
+            
+            # Apply token-aware splitting to handle long paragraphs
+            for para in original_paragraphs:
                 if not para.strip():
                     continue
                     
@@ -300,6 +479,20 @@ def chunk_text(
             chunks: List[Dict[str, Any]] = []
             parent_id = f"doc:{_hash_path(path)}"
             
+            # Calculate overlap size in characters
+            overlap_chars = cfg.get("overlap_chars", 200)
+            
+            # Create a mapping of paragraph index to position in original text
+            para_positions = []
+            current_pos = 0
+            for para in processed_paragraphs:
+                para_len = len(para)
+                para_positions.append((current_pos, current_pos + para_len))
+                current_pos += para_len
+            
+            # Combine all processed paragraphs into a single text for easier overlap handling
+            full_text = "".join(processed_paragraphs)
+            
             for idx, para in enumerate(processed_paragraphs):
                 if not para.strip():
                     continue
@@ -307,22 +500,84 @@ def chunk_text(
                 # Generate unique chunk ID
                 chunk_id = f"chunk:{uuid.uuid4().hex[:8]}"
                 
+                # Get position of this paragraph in the full text
+                start_pos, end_pos = para_positions[idx]
+                
+                # Calculate overlap positions
+                overlap_start = max(0, start_pos - overlap_chars)
+                overlap_end = min(len(full_text), end_pos + overlap_chars)
+                
+                # Get overlap context configuration
+                config = get_chunker_config('chonky')
+                overlap_context_config = config.get('overlap_context', {})
+                use_overlap_context = overlap_context_config.get('enabled', True)
+                store_pre_context = overlap_context_config.get('store_pre_context', True)
+                store_post_context = overlap_context_config.get('store_post_context', True)
+                max_pre_context_chars = overlap_context_config.get('max_pre_context_chars', 1000)
+                max_post_context_chars = overlap_context_config.get('max_post_context_chars', 1000)
+                store_position_info = overlap_context_config.get('store_position_info', True)
+                
+                # Calculate overlap positions with limits
+                pre_context_start = max(0, start_pos - min(overlap_chars, max_pre_context_chars))
+                pre_context_end = start_pos
+                post_context_start = end_pos
+                post_context_end = min(len(full_text), end_pos + min(overlap_chars, max_post_context_chars))
+                
                 # Count tokens for metadata
                 token_count = _count_tokens(para, tokenizer)
                 
-                chunks.append({
+                # Generate a content hash for efficient storage and retrieval
+                content_hash = hashlib.md5(para.encode()).hexdigest()
+                
+                # Create the base chunk metadata
+                chunk_metadata = {
                     "id": chunk_id,
                     "parent": parent_id,
                     "path": path,
                     "type": document.get("type", "markdown"),
-                    "content": para,
+                    "content": para,  # Store the original paragraph without overlap
                     "symbol_type": "paragraph",
                     "name": f"paragraph_{idx}",
                     "line_start": 0,
                     "line_end": 0,
                     "token_count": token_count,
+                    "content_hash": content_hash,
                     "embedding": None,  # Placeholder for future embedding
-                })
+                }
+                
+                # Add overlap context if enabled
+                if use_overlap_context:
+                    overlap_context = {}
+                    
+                    # Add pre-context if enabled
+                    if store_pre_context and pre_context_end > pre_context_start:
+                        overlap_context["pre_context"] = full_text[pre_context_start:pre_context_end]
+                    
+                    # Add post-context if enabled
+                    if store_post_context and post_context_end > post_context_start:
+                        overlap_context["post_context"] = full_text[post_context_start:post_context_end]
+                    
+                    # Add position information if enabled
+                    if store_position_info:
+                        overlap_context["pre_context_start"] = pre_context_start
+                        overlap_context["pre_context_end"] = pre_context_end
+                        overlap_context["post_context_start"] = post_context_start
+                        overlap_context["post_context_end"] = post_context_end
+                    
+                    # Add overlap context to chunk metadata
+                    chunk_metadata["overlap_context"] = overlap_context
+                else:
+                    # For backward compatibility, include the full content with overlap
+                    content_with_overlap = full_text[pre_context_start:post_context_end]
+                    content_offset = start_pos - pre_context_start
+                    content_length = end_pos - start_pos
+                    
+                    chunk_metadata["content_with_overlap"] = content_with_overlap
+                    chunk_metadata["content_offset"] = content_offset
+                    chunk_metadata["content_length"] = content_length
+                
+                # Add the chunk to the list
+                chunks.append(chunk_metadata)
             
             logger.info("Chunked %s into %d paragraphs using Chonky", path, len(chunks))
             

@@ -22,24 +22,39 @@ def chunk_text_batch(
 ) -> Union[List[List[Dict[str, Any]]], List[str]]:
     """Process multiple documents in parallel using Chonky chunking.
     
-    Parameters
-    ----------
-    documents:
-        List of pre-processed document dicts, each containing content and path keys
-    max_tokens:
-        Token budget for each chunk
-    output_format:
-        Output format ("python" or "json")
-    parallel:
-        Whether to process in parallel using a thread pool
-    num_workers:
-        Number of worker threads when parallel=True
+    This function processes multiple documents in batch, either serially or in parallel,
+    using the Chonky neural chunking model. It preserves the original text casing and
+    formatting while identifying natural paragraph and section boundaries.
+    
+    The batch processing can significantly improve throughput when processing many documents,
+    especially when using parallel processing on multi-core systems. The function uses a
+    thread pool to distribute the workload across multiple workers when parallel=True.
+    
+    Configuration is loaded from src/config/chunker_config.yaml and the batch_size parameter
+    controls how many documents are processed at once in parallel mode.
+    
+    Args:
+        documents: List of document dictionaries, each with the following keys:
+            - content: The text content of the document
+            - path: Path to the document (used for ID generation)
+            - type: Document type (e.g., "markdown", "text")
+        max_tokens: Maximum tokens per chunk (default: 2048)
+        output_format: Output format, either "python" for Python objects or "json" for
+                      JSON string (default: "python")
+        parallel: Whether to process documents in parallel using a thread pool
+                 (default: True)
+        num_workers: Number of worker threads when parallel=True (default: 4)
         
-    Returns
-    -------
-    Union[List[List[Dict[str, Any]]], List[str]]
-        List of chunk results for each document
+    Returns:
+        If output_format is "python": List of lists of chunk dictionaries, where each inner
+        list contains the chunks for the corresponding document in the input list.
+        If output_format is "json": List of JSON strings, one for each document.
+        
+    Raises:
+        ValueError: If any document is missing required fields or has invalid content
+        RuntimeError: If there are issues with the model engine (will fall back to basic chunking)
     """
+    
     # Define a generic process function that returns the appropriate type
     def process_doc(doc: Dict[str, Any]) -> Union[str, List[Dict[str, Any]]]:
         result = chunk_text(doc, max_tokens=max_tokens, output_format=output_format)

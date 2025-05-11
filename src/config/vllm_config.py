@@ -47,6 +47,9 @@ class VLLMModelConfig(BaseModel):
         default=None, description="Embedding model ID (defaults to model_id if not specified)"
     )
     
+    # Server configuration
+    port: Optional[int] = Field(default=None, description="Port for this specific model (overrides server port)")
+    
     # Model capabilities and parameters
     max_tokens: int = Field(default=2048, description="Maximum number of tokens to generate")
     temperature: float = Field(default=0.7, description="Sampling temperature")
@@ -62,6 +65,7 @@ class VLLMModelConfig(BaseModel):
         return {
             "model_id": self.model_id,
             "embedding_model_id": self.embedding_model_id,
+            "port": self.port,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,

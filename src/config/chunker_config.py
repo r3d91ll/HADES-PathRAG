@@ -40,9 +40,30 @@ DEFAULT_AST_CONFIG: Dict[str, Any] = {
 
 DEFAULT_CHONKY_CONFIG: Dict[str, Any] = {
     'max_tokens': 2048,
+    'min_tokens': 64,
     'overlap_tokens': 200,
     'semantic_chunking': True,
     'preserve_structure': True,
+    'batch_size': 8,
+    
+    # Overlap context settings
+    'overlap_context': {
+        'enabled': True,
+        'store_pre_context': True,
+        'store_post_context': True,
+        'max_pre_context_chars': 1000,
+        'max_post_context_chars': 1000,
+        'store_position_info': True,
+    },
+    
+    # Cache settings
+    'cache_with_device': True,
+    'cache_size': 4,
+    
+    # Model engine settings
+    'early_availability_check': True,
+    'auto_start_engine': True,
+    'max_startup_retries': 3,
 }
 
 DEFAULTS: Dict[str, Any] = {
