@@ -1,0 +1,11 @@
+{
+  "total_documents": 2,
+  "total_chunks": 517,
+  "avg_chunks_per_doc": 258.5,
+  "processing_time": 24.62283182144165,
+  "chunking_time": 0.009039640426635742,
+  "document_ids": [
+    "pdf_2a70cd76_PathRAG_paper.pdf",
+    "pdf_7cc87cff_ISNE_paper.pdf"
+  ]
+}
