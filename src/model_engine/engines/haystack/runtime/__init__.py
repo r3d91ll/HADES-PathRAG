@@ -13,11 +13,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any, Dict, Optional, Union, List, TypeVar, cast
 
 _DEFAULT_SOCKET_PATH = os.getenv("HADES_MODEL_MGR_SOCKET", "/tmp/hades_model_mgr.sock")
 
 
-def _ensure_server(socket_path: str = _DEFAULT_SOCKET_PATH) -> None:
+def _ensure_server(socket_path: Optional[str] = _DEFAULT_SOCKET_PATH) -> None:
     """Spawn the model-manager server process if the socket is missing.
 
     This helper is intentionally very small to avoid import-heavy
@@ -25,7 +26,10 @@ def _ensure_server(socket_path: str = _DEFAULT_SOCKET_PATH) -> None:
     launch ``python -m src.runtime.server`` as a daemon.
     """
     import sys
-    if os.path.exists(socket_path):
+    # Handle None case with default value
+    actual_socket_path = socket_path if socket_path is not None else _DEFAULT_SOCKET_PATH
+    
+    if os.path.exists(actual_socket_path):
         return
 
     # Check at runtime to respect env var changes after module load
@@ -34,9 +38,13 @@ def _ensure_server(socket_path: str = _DEFAULT_SOCKET_PATH) -> None:
             f"Model-manager socket not found and autostart disabled for {socket_path}. "
             "Start the server via `python -m src.runtime.server`.")
 
-    print(f"[ModelClient] Attempting to autostart model manager server at {socket_path}", file=sys.stderr)
+    print(f"[ModelClient] Attempting to autostart model manager server at {actual_socket_path}", file=sys.stderr)
     python_exe = sys.executable
-    cmd = [python_exe, "-m", "src.runtime.server", socket_path]
+    # Ensure all elements in the command list are strings
+    server_module = "src.model_engine.engines.haystack.runtime.server"
+    # Cast to str to ensure mypy knows it's a string
+    socket_arg = str(actual_socket_path)
+    cmd = [python_exe, "-m", server_module, socket_arg]
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        start_new_session=True)
@@ -48,18 +56,20 @@ def _ensure_server(socket_path: str = _DEFAULT_SOCKET_PATH) -> None:
         raise
 
     for _ in range(30):
-        if os.path.exists(socket_path):
+        if os.path.exists(actual_socket_path):
             return
         time.sleep(0.1)
 
-    raise RuntimeError(f"Failed to start model-manager server; socket never appeared at {socket_path}.")
+    raise RuntimeError(f"Failed to start model-manager server; socket never appeared at {actual_socket_path}.")
 
 
 class ModelClient:
     """Lightweight JSON-RPC client that talks to the UDS model manager."""
 
-    def __init__(self, socket_path: str | None = None):
+    def __init__(self, socket_path: Optional[str] = None) -> None:
+        # Allow override via constructor, but default to env var
         self.socket_path = socket_path or _DEFAULT_SOCKET_PATH
+        # Ensure server is running (noop if already running)
         _ensure_server(self.socket_path)
 
     # ---------------------------------------------------------------------
@@ -70,7 +80,7 @@ class ModelClient:
         assert isinstance(result, str)
         return result
 
-    def load(self, model_id: str, device: str | None = None) -> str:
+    def load(self, model_id: str, device: Optional[str] = None) -> str:
         result = self._request({"action": "load", "model_id": model_id, "device": device})["result"]
         assert isinstance(result, str)
         return result
@@ -80,7 +90,7 @@ class ModelClient:
         assert isinstance(result, str)
         return result
         
-    def info(self) -> dict[str, Any]:
+    def info(self) -> Dict[str, Any]:
         """Get information about loaded models from the server.
         
         Returns:
@@ -102,7 +112,7 @@ class ModelClient:
         assert isinstance(result, dict)
         return result
         
-    def debug(self) -> dict[str, Any]:
+    def debug(self) -> Dict[str, Any]:
         """Get detailed debug information about the model server.
         
         Returns:
@@ -158,7 +168,7 @@ class ModelClient:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _request(self, payload: dict) -> dict[str, object]:
+    def _request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         import socket, json
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -176,6 +186,30 @@ class ModelClient:
         return obj
 
 
+from .server import (
+    run_server,
+    _load_model,
+    _unload_model,
+    _get_model_info,
+    _debug_cache,
+    _shutdown_server,
+    _handle_request,
+    _handle_conn,
+    _is_server_running,
+    socket,
+)
+
 __all__ = [
     "ModelClient",
+    "run_server",
+    "_load_model",
+    "_unload_model",
+    "_get_model_info",
+    "_debug_cache",
+    "_shutdown_server",
+    "_handle_request",
+    "_handle_conn",
+    "_is_server_running",
+    "socket",
 ]
+

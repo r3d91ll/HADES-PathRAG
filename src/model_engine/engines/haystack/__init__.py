@@ -35,7 +35,7 @@ class HaystackModelEngine(ModelEngine):
             socket_path: Optional custom path to the Unix domain socket
         """
         self.socket_path = socket_path
-        self.client = None
+        self.client: Optional[ModelClient] = None
         self.running = False
         
     def start(self) -> bool:
@@ -46,88 +46,219 @@ class HaystackModelEngine(ModelEngine):
         Returns:
             True if the service was started successfully, False otherwise
         """
-        if self.running and self.client is not None:
-            print("[HaystackModelEngine] Service is already running")
-            return True
-            
+        # Early return path if already running
+        if self.running:
+            if self.client is not None:
+                print("[HaystackModelEngine] Service is already running")
+                return True
+            else:
+                # Running but no client is an inconsistent state - fix it
+                self.running = False
+        
+        # Otherwise attempt to start    
+        # Initialize client and test connection
         try:
-            self.client = ModelClient(socket_path=self.socket_path)
-            # Test connection with a ping
-            response = self.client.ping()
+            # Create new client
+            client = ModelClient(socket_path=self.socket_path)
+            self.client = client
+                
+            # Test the connection with a ping
+            response = client.ping()
             self.running = response == "pong"
             return self.running
+            
         except Exception as e:
+            # Handle any errors during client creation or ping
             print(f"[HaystackModelEngine] Failed to start service: {e}")
             self.running = False
+            self.client = None
             return False
             
     def stop(self) -> bool:
         """Stop the model engine service.
         
-        This will shut down the model manager server and release all resources.
+        This will shutdown the runtime service if it was started by this engine.
+        Note that this will affect all clients that share the same socket.
         
         Returns:
             True if the service was stopped successfully, False otherwise
         """
-        if not self.running or self.client is None:
-            print("[HaystackModelEngine] Service is not running")
+        # Check running state first
+        if not self.running:
+            print("[HaystackModelEngine] Service is not marked as running")
+            self.client = None  # Ensure client is cleared
             return True
             
+        # Check client separately
+        if self.client is None:
+            print("[HaystackModelEngine] No client available to stop")
+            self.running = False  # Fix inconsistent state
+            return True
+        
+        # At this point we know service is running and client is not None
         try:
-            # Request server shutdown
+            # Attempt graceful shutdown
             self.client.shutdown()
             self.running = False
             self.client = None
             return True
         except Exception as e:
-            print(f"[HaystackModelEngine] Failed to stop service: {e}")
+            print(f"[HaystackModelEngine] Error stopping service: {e}")
+            # Keep the service marked as running on error
             return False
+            
+    def shutdown(self) -> bool:
+        """Completely shut down the engine and service.
+        
+        This is a more decisive version of stop() that ensures the service
+        is fully terminated. It may terminate the server process if necessary.
+        
+        Returns:
+            True if shutdown was successful, False otherwise
+        """
+        # If we're not running, no action needed
+        if not self.running and self.client is None:
+            return True
+            
+        # Reset the state regardless of current status
+        result = True
+        
+        # Try to stop gracefully if we have a client
+        if self.client is not None:
+            try:
+                result = self.stop()  # This attempts a graceful shutdown
+            except Exception as e:
+                print(f"[HaystackModelEngine] Error during shutdown: {e}")
+                result = False
+        
+        # Ensure our internal state is consistent
+        self.running = False
+        self.client = None
+        
+        return result
             
     def restart(self) -> bool:
         """Restart the model engine service.
         
-        This will stop and then start the model manager server.
+        Returns:
+            True if service was successfully restarted, False otherwise
+        """
+        # Try to stop first
+        try:
+            self.stop()
+        except Exception as e:
+            print(f"[HaystackModelEngine] Warning during stop in restart: {e}")
+            # Continue to start attempt even if stop fails
+            
+        # Always attempt to start regardless of stop success
+        start_result = self.start()
+        return start_result
+        
+    def get_status(self) -> Dict[str, Any]:
+        """Get the current status of the model engine.
         
         Returns:
-            True if the service was restarted successfully, False otherwise
+            Dict with status information
         """
-        self.stop()
-        return self.start()
+        status_info: Dict[str, Any] = {
+            "running": self.running,
+            "socket": self.socket_path,
+        }
         
-    def status(self) -> Dict[str, Any]:
-        """Get the status of the model engine service.
-        
-        Returns:
-            Dict containing status information including whether the service is running
-            and information about loaded models
-        """
-        status_info = {"running": self.running}
-        
+        # Add loaded models if service is running
         if self.running and self.client is not None:
             try:
-                # Check server health
-                ping_result = self.client.ping() == "pong"
-                status_info["healthy"] = ping_result
+                # Verify we have a client for mypy
+                assert self.client is not None
                 
-                # Get info about loaded models
-                try:
-                    loaded_models = self.get_loaded_models()
-                    status_info["loaded_models"] = loaded_models
-                    status_info["model_count"] = len(loaded_models)
-                except Exception as e:
-                    status_info["model_info_error"] = str(e)
+                status_info["models"] = self.client.info()
             except Exception as e:
-                status_info["healthy"] = False
                 status_info["error"] = str(e)
                 
         return status_info
         
-    def __enter__(self):
+    def is_running(self) -> bool:
+        """Check if the model engine service is running.
+        
+        Returns:
+            True if the service is running, False otherwise
+        """
+        # Quick check based on internal state
+        if not self.running:
+            return False
+            
+        # If marked as running but no client, fix this inconsistent state
+        if self.client is None:
+            self.running = False
+            return False
+            
+        # We have a client, try to ping the server
+        try:
+            ping_result = self.client.ping()
+            is_ok = ping_result == "pong"
+            
+            # Update internal state if ping fails
+            if not is_ok:
+                self.running = False
+                
+            return is_ok
+        except Exception:
+            # Connection failed
+            self.running = False
+            return False
+            
+    def health_check(self) -> Dict[str, Any]:
+        """Check the health of the engine.
+        
+        Returns:
+            Dict with health status information
+        """
+        # Start with basic health info
+        health_info: Dict[str, Any] = {
+            "status": "healthy" if self.running else "not_running",
+            "message": "Engine is running" if self.running else "Engine is not running",
+            "socket_path": self.socket_path
+        }
+        
+        # Only check more details if running
+        if self.running:
+            # First check if we have a client
+            if self.client is None:
+                health_info["status"] = "degraded"
+                health_info["message"] = "Engine marked as running but client is not initialized"
+                return health_info
+                
+            # Then try to use the client
+            try:
+                # Test server connection
+                ping_result = self.client.ping()
+                health_info["ping"] = ping_result == "pong"
+                
+                if ping_result != "pong":
+                    health_info["status"] = "degraded"
+                    health_info["message"] = f"Engine ping returned unexpected result: {ping_result}"
+                    return health_info
+                
+                # Try to get memory usage info 
+                try:
+                    debug_info = self.client.debug()
+                    if debug_info:
+                        health_info["cache_size"] = debug_info.get("cache_size", "unknown")
+                        health_info["max_cache_size"] = debug_info.get("max_cache_size", "unknown")
+                except Exception as debug_error:
+                    health_info["debug_error"] = str(debug_error)
+            except Exception as e:
+                health_info["status"] = "degraded"
+                health_info["message"] = f"Engine is running but unresponsive: {e}"
+        
+        return health_info
+        
+    def __enter__(self) -> 'HaystackModelEngine':
         """Context manager entry - automatically start the service."""
         self.start()
         return self
         
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception], exc_tb: Optional[Any]) -> None:
         """Context manager exit - automatically stop the service."""
         self.stop()
     
@@ -147,10 +278,12 @@ class HaystackModelEngine(ModelEngine):
             RuntimeError: If the service is not running or another error occurs
         """
         if not self.running or self.client is None:
-            self.start()
-            if not self.running:
+            started = self.start()
+            if not started or self.client is None:
                 raise RuntimeError("Model engine service is not running")
         
+        # At this point we know self.client is not None
+        assert self.client is not None
         return self.client.load(model_id, device=device if isinstance(device, str) else None)
     
     def unload_model(self, model_id: str) -> str:
@@ -167,7 +300,9 @@ class HaystackModelEngine(ModelEngine):
         """
         if not self.running or self.client is None:
             raise RuntimeError("Model engine service is not running")
-            
+        
+        # At this point we know self.client is not None
+        assert self.client is not None    
         return self.client.unload(model_id)
     
     def infer(self, model_id: str, inputs: Union[str, List[str]],
@@ -177,62 +312,57 @@ class HaystackModelEngine(ModelEngine):
         Args:
             model_id: The ID of the model to use
             inputs: Input text or list of texts
-            task: The type of task to perform (e.g., "generate", "embed", "chunk")
-            **kwargs: Task-specific parameters
+            task: The task to perform (e.g., "embedding", "generation")
+            **kwargs: Additional task-specific parameters
             
         Returns:
-            Model outputs in an appropriate format for the task
+            Task-specific outputs
             
         Raises:
-            ValueError: If the model doesn't support the task
-            RuntimeError: If inference fails or the service is not running
+            NotImplementedError: This method is not yet implemented
+            RuntimeError: If the model service is not running
         """
-        if not self.running or self.client is None:
-            self.start()
-            if not self.running:
-                raise RuntimeError("Model engine service is not running")
-                
-        # TODO: Implement when we add infer support to the runtime service
-        raise NotImplementedError("Inference is not yet implemented for the Haystack engine")
+        # Check client state first
+        if not self.running:
+            raise RuntimeError("Model engine service is not running")
+        
+        if self.client is None:
+            raise RuntimeError("Model client is not initialized")
+       
+        # Handle different task types
+        task_lower = task.lower()
+        if task_lower == "embedding":
+            # This feature is not yet implemented
+            raise NotImplementedError("Embedding task not yet implemented in client")
+        elif task_lower == "generation":
+            # This feature is not yet implemented
+            raise NotImplementedError("Generation task not yet implemented")
+        else:
+            # Unknown task
+            raise ValueError(f"Unknown task type: {task}")
     
     def get_loaded_models(self) -> Dict[str, Dict[str, Any]]:
         """Get information about currently loaded models.
         
         Returns:
-            Dict mapping model_id to metadata about the model
+            Dictionary with model IDs as keys and info as values
             
         Raises:
             RuntimeError: If the service is not running or another error occurs
         """
-        if not self.running or self.client is None:
+        # Check running state first
+        if not self.running:
             raise RuntimeError("Model engine service is not running")
         
-        # Get basic information about cached models from the runtime service
-        # The info result contains model_ids as keys and timestamps as values
-        cache_info = self.client.info()
-        
-        # Transform into expected format
-        result: Dict[str, Dict[str, Any]] = {}
-        for model_id, timestamp in cache_info.items():
-            result[model_id] = {
-                "load_time": timestamp,
-                "status": "loaded",
-                "engine": "haystack"
-            }
-        
-        return result
-    
-    def health_check(self) -> Dict[str, Any]:
-        """Check the health of the engine.
-        
-        Returns:
-            Dict containing health information
-        """
-        if not self.running or self.client is None:
-            return {"status": "not_running"}
+        # Check if client is available
+        if self.client is None:
+            raise RuntimeError("Model client is not initialized")
             
-        # Ping the server to check its health
+        # Get model info from service
         try:
-            return {"status": "ok" if self.client.ping() == "pong" else "error"}
+            result = self.client.info()
+            return result
         except Exception as e:
-            return {"status": "error", "error": str(e)}
+            raise RuntimeError(f"Error getting model info: {e}") from e
+    
+    # The main health_check method is already implemented above

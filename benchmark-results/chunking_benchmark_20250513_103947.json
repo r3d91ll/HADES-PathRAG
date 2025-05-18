@@ -1,0 +1,59 @@
+{
+  "timestamp": "2025-05-13 10:38:08",
+  "system_info": {
+    "device": "cuda:0",
+    "model_id": "mirth/chonky_modernbert_large_1"
+  },
+  "documents": [
+    {
+      "filename": "ISNE_paper.pdf",
+      "id": "pdf_0dbab603_ISNE_paper.pdf",
+      "content_length": 61043,
+      "processing_time": 12.760027885437012,
+      "cpu_chunking": {
+        "time": 33.79128050804138,
+        "chunk_count": 11,
+        "avg_characters": 5549.363636363636,
+        "avg_tokens": 854.5454545454545
+      },
+      "gpu_chunking": {
+        "time": 0.9453678131103516,
+        "chunk_count": 192482,
+        "avg_characters": 1.0,
+        "avg_tokens": 0.8919431427354246
+      },
+      "comparison": {
+        "speedup": 35.744056481957855,
+        "chunk_count_diff": 192471
+      }
+    },
+    {
+      "filename": "PathRAG_paper.pdf",
+      "id": "pdf_c7b4ae1a_PathRAG_paper.pdf",
+      "content_length": 64474,
+      "processing_time": 12.912344932556152,
+      "cpu_chunking": {
+        "time": 38.483656883239746,
+        "chunk_count": 20,
+        "avg_characters": 3223.7,
+        "avg_tokens": 469.5
+      },
+      "gpu_chunking": {
+        "time": 0.11919856071472168,
+        "chunk_count": 132626,
+        "avg_characters": 1.0,
+        "avg_tokens": 0.8518314659267414
+      },
+      "comparison": {
+        "speedup": 322.85336880319227,
+        "chunk_count_diff": 132606
+      }
+    }
+  ],
+  "summary": {
+    "total_documents": 2,
+    "total_cpu_chunking_time": 72.27493739128113,
+    "total_gpu_chunking_time": 1.0645663738250732,
+    "speedup": 67.89143370327528
+  }
+}

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 import uuid
 import asyncio
+from multiprocessing.pool import ThreadPool
 from tqdm.asyncio import tqdm as tqdm_async
 
 from src.storage.arango.connection import ArangoConnection
@@ -22,9 +23,10 @@ from src.docproc.manager import DocumentProcessorManager
 from src.embedding.base import EmbeddingAdapter, get_adapter
 from src.embedding.batch import batch_embed
 from src.chunking.code_chunkers import chunk_code
-from src.chunking.text_chunkers.chonky_chunker import chunk_text
+from src.chunking.text_chunkers.chonky_chunker import chunk_text, ParagraphSplitter
 from src.isne.types.models import DocumentRelation, IngestDocument, RelationType
 from src.types.common import EmbeddingVector
+from src.pipelines.ingest.orchestrator.config import IngestionConfig, DEFAULT_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -91,36 +93,56 @@ class RepositoryIngestor:
         connection: Optional[ArangoConnection] = None,
         doc_processor: Optional[DocumentProcessorManager] = None,
         embedding_adapter: Optional[EmbeddingAdapter] = None,
-        initialize_db: bool = False,
-        batch_size: int = 32,
-        max_concurrency: int = 8,
+        config: Optional[IngestionConfig] = None,
+        initialize_db: Optional[bool] = None,
+        batch_size: Optional[int] = None,
+        max_concurrency: Optional[int] = None,
     ):
         """Initialize the repository ingestor.
         
         Args:
             connection: ArangoDB connection to use. If None, a new connection will be created.
             doc_processor: Document processor to use. If None, a new processor will be created.
-            embedding_adapter: Embedding adapter to use. If None, the default adapter will be used.
-            initialize_db: Whether to initialize the database (create collections and indices).
-            batch_size: Batch size for processing documents.
-            max_concurrency: Maximum number of concurrent operations.
+            embedding_adapter: Embedding adapter to use. If None, the default adapter will be used based on config.
+            config: Ingestion configuration. If None, the default configuration will be used.
+            initialize_db: Whether to initialize the database (overrides config if provided).
+            batch_size: Batch size for processing documents (overrides config if provided).
+            max_concurrency: Maximum number of concurrent operations (overrides config if provided).
         """
+        # Load configuration
+        self.config = config or DEFAULT_CONFIG
+        
+        # Override config with explicit parameters if provided
+        if initialize_db is not None:
+            self.config.initialize_db = initialize_db
+        if batch_size is not None:
+            self.config.batch_size = batch_size
+        if max_concurrency is not None:
+            self.config.max_concurrency = max_concurrency
+            
         # Initialize components
         self.connection = connection or ArangoConnection()
         self.repository = ArangoRepository(self.connection)
         self.doc_processor = doc_processor or DocumentProcessorManager()
-        self.embedding_adapter = embedding_adapter or get_adapter("vllm")
         
-        # Configuration
-        self.initialize_db = initialize_db
-        self.batch_size = batch_size
-        self.max_concurrency = max_concurrency
+        # Initialize embedding adapter based on config if not explicitly provided
+        if embedding_adapter is None:
+            adapter_name = self.config.embedding.adapter
+            self.embedding_adapter = get_adapter(adapter_name)
+            # Set device for embedding adapter if possible
+            if hasattr(self.embedding_adapter, "set_device"):
+                self.embedding_adapter.set_device(self.config.embedding.device)
+        else:
+            self.embedding_adapter = embedding_adapter
+            
+        # Cache for paragraph splitter
+        self._paragraph_splitter = None
         
         # Statistics
         self.stats = IngestionStats()
         
         # If initialize_db is True, create necessary database structures
-        if self.initialize_db:
+        if self.config.initialize_db:
             self._initialize_database()
     
     def _initialize_database(self) -> None:
@@ -270,6 +292,130 @@ class RepositoryIngestor:
         else:
             return "text"  # Default to text
     
+    def _chunk_text_cpu(
+        self,
+        document: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Process text document using CPU-based semantic chunking with parallel processing.
+        
+        This method implements optimized CPU-based chunking using the ParagraphSplitter
+        with multithreading for better performance.
+        
+        Args:
+            document: Document dictionary with content, ID, and metadata.
+            
+        Returns:
+            List of chunk dictionaries.
+        """
+        # Get document content and metadata
+        content = document.get("content", "")
+        doc_id = document.get("id", f"doc:{uuid.uuid4().hex}")
+        doc_path = document.get("path", "unknown")
+        doc_type = document.get("type", "text")
+        
+        # Get config settings
+        config = self.config.chunking
+        model_id = config.model_id
+        max_tokens = config.max_tokens
+        num_workers = config.num_cpu_workers
+        
+        # Initialize the paragraph splitter if not already cached
+        if self._paragraph_splitter is None:
+            logger.info(f"Creating CPU ParagraphSplitter with model {model_id}")
+            self._paragraph_splitter = ParagraphSplitter(
+                model_id=model_id,
+                device="cpu",
+                use_model_engine=False
+            )
+        
+        # For large documents, process in segments with parallel workers
+        segments = []
+        char_length = len(content)
+        
+        # If document is large, split into segments for more efficient processing
+        if char_length > 10000:
+            logger.info(f"Processing large document ({char_length} chars) in segments")
+            segment_size = 10000  # ~10k characters per segment
+            segment_count = (char_length // segment_size) + (1 if char_length % segment_size > 0 else 0)
+            
+            # Create segments with slight overlap to avoid cutting in the middle of paragraphs
+            for i in range(segment_count):
+                start = max(0, i * segment_size - 200 if i > 0 else 0) 
+                end = min(char_length, (i + 1) * segment_size + 200 if i < segment_count - 1 else char_length)
+                segment_text = content[start:end]
+                segments.append((i+1, segment_count, segment_text))
+                
+            # Process segments in parallel using ThreadPool
+            if num_workers > 1 and len(segments) > 1:
+                with ThreadPool(min(num_workers, len(segments))) as pool:
+                    segment_results = pool.map(self._process_text_segment, segments)
+            else:
+                segment_results = [self._process_text_segment(segment) for segment in segments]
+                
+            # Combine paragraphs from all segments
+            all_paragraphs = []
+            for segment_idx, paragraphs in enumerate(segment_results):
+                logger.info(f"Segment {segment_idx+1} produced {len(paragraphs)} paragraphs")
+                all_paragraphs.extend(paragraphs)
+                
+            # Create chunks from paragraphs
+            chunks = []
+            for i, para_text in enumerate(all_paragraphs):
+                chunk_id = f"{doc_id}:chunk:{i}"
+                chunks.append({
+                    "id": chunk_id,
+                    "doc_id": doc_id,
+                    "type": "chunk",
+                    "symbol_type": "paragraph",
+                    "name": f"paragraph_{i}",
+                    "path": doc_path,
+                    "content": para_text,
+                    "parent": doc_id,
+                    "metadata": {},
+                })
+            
+            logger.info(f"Split document into {len(chunks)} semantic paragraphs across {len(segments)} segments")
+            return chunks
+            
+        else:
+            # For smaller documents, process directly
+            paragraphs = self._paragraph_splitter.split_text(content)
+            
+            # Create chunks from paragraphs
+            chunks = []
+            for i, para_text in enumerate(paragraphs):
+                chunk_id = f"{doc_id}:chunk:{i}"
+                chunks.append({
+                    "id": chunk_id,
+                    "doc_id": doc_id,
+                    "type": "chunk",
+                    "symbol_type": "paragraph",
+                    "name": f"paragraph_{i}",
+                    "path": doc_path,
+                    "content": para_text,
+                    "parent": doc_id,
+                    "metadata": {},
+                })
+                
+            logger.info(f"Split document into {len(chunks)} semantic paragraphs")
+            return chunks
+    
+    def _process_text_segment(self, segment_data: Tuple[int, int, str]) -> List[str]:
+        """Process a single text segment with the paragraph splitter.
+        
+        Args:
+            segment_data: Tuple of (segment_index, total_segments, segment_text)
+            
+        Returns:
+            List of paragraph texts from this segment.
+        """
+        segment_idx, total_segments, segment_text = segment_data
+        logger.info(f"Processing segment {segment_idx}/{total_segments} ({len(segment_text)} chars)")
+        
+        # Split the segment into paragraphs
+        paragraphs = self._paragraph_splitter.split_text(segment_text)
+        return paragraphs
+    
     def _extract_entities_and_relationships(
         self, 
         document: Dict[str, Any],
@@ -285,15 +431,35 @@ class RepositoryIngestor:
         entities: List[Dict[str, Any]] = []
         relationships: List[DocumentRelation] = []
         
-        # Extract document type
+        # Extract document type and content
         doc_type = document.get("type", "text")
+        doc_content = document.get("content", "")
         
         if doc_type == "python":
             # Use AST-based chunking for Python files
             chunks = chunk_code(document)
         else:
-            # Use semantic chunking for text files
-            chunks = chunk_text(document)
+            # Use semantic chunking for text files, respecting config settings
+            chunking_config = self.config.chunking
+            
+            if chunking_config.use_semantic_chunking:
+                if chunking_config.use_gpu:
+                    # Use GPU-based semantic chunking if configured
+                    logger.info(f"Using GPU semantic chunking with device {chunking_config.device}")
+                    chunks = chunk_text(
+                        document, 
+                        max_tokens=chunking_config.max_tokens,
+                        model_id=chunking_config.model_id,
+                        device=chunking_config.device
+                    )
+                else:
+                    # Use CPU-based semantic chunking with parallel processing
+                    logger.info(f"Using CPU semantic chunking with {chunking_config.num_cpu_workers} workers")
+                    chunks = self._chunk_text_cpu(document)
+            else:
+                # Use basic chunking if semantic chunking is disabled
+                logger.info("Using basic chunking (semantic chunking disabled)")
+                chunks = chunk_text(document, semantic_chunking=False)
         
         # Create document-level entity
         doc_id = document.get("id") or f"doc:{uuid.uuid4().hex}"
@@ -372,12 +538,19 @@ class RepositoryIngestor:
         texts = [e["content"] for e in entities_with_content]
         entity_ids = [e["id"] for e in entities_with_content]
         
+        # Configure embedding generation based on config
+        batch_size = self.config.batch_size
+        max_concurrency = self.config.max_concurrency
+        
+        logger.info(f"Using {'GPU' if self.config.embedding.use_gpu else 'CPU'} for embeddings")
+        logger.info(f"Embedding device: {self.config.embedding.device}")
+        
         # Generate embeddings in batches
         embeddings = await batch_embed(
             texts,
             self.embedding_adapter,
-            batch_size=self.batch_size,
-            max_concurrency=self.max_concurrency,
+            batch_size=batch_size,
+            max_concurrency=max_concurrency,
             show_progress=True,
         )
         

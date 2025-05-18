@@ -12,7 +12,8 @@ import threading
 import time
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional, Union, List, cast
+
 
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -23,6 +24,34 @@ from transformers import AutoModel, AutoTokenizer
 MAX_MODELS: int = int(os.getenv("HADES_MAX_MODELS", "3"))
 DEFAULT_DEVICE: str = os.getenv("HADES_DEFAULT_DEVICE", "cuda:0")
 SOCKET_PATH: str = os.getenv("HADES_MODEL_MGR_SOCKET", "/tmp/hades_model_mgr.sock")
+
+
+# ---------------------------------------------------------------------------
+# Server status check
+# ---------------------------------------------------------------------------
+def _is_server_running(socket_path: Optional[str] = None) -> bool:
+    """Check if the model manager server is running.
+    
+    This checks if the socket exists and can be connected to.
+    
+    Args:
+        socket_path: Path to the socket file (defaults to SOCKET_PATH)
+        
+    Returns:
+        True if the server is running and the socket is accessible, False otherwise
+    """
+    socket_path = socket_path or SOCKET_PATH
+    if not os.path.exists(socket_path):
+        return False
+    
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(socket_path)
+            # If we can connect, the server is running
+            return True
+    except Exception:
+        # Any error means the server is not running properly
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +102,7 @@ _CACHE = _LRUCache(MAX_MODELS)
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def _load_model(model_id: str, device: str | None = None) -> str:
+def _load_model(model_id: str, device: Optional[str] = None) -> str:
     device = device or DEFAULT_DEVICE
     cached = _CACHE.get(model_id)
     if cached:
@@ -89,30 +118,57 @@ def _unload_model(model_id: str) -> str:
     return "unloaded"
 
 
-def _get_model_info() -> dict[str, Any]:
+def _format_model_data(model_id: str, data: Any) -> Dict[str, Any]:
+    """Format model data into a consistent structure.
+    
+    Args:
+        model_id: The ID of the model
+        data: The data associated with the model (typically a timestamp)
+        
+    Returns:
+        A dictionary with structured model information
+    """
+    if isinstance(data, (int, float)):
+        # For timestamp data (most common case)
+        return {
+            "load_time": data,
+            "status": "loaded",
+            "engine": "haystack"
+        }
+    elif data is None:
+        # For None values
+        return {
+            "status": "unknown",
+            "engine": "haystack",
+            "data": "none"
+        }
+    else:
+        # For any other type (strings, tuples, etc.)
+        return {
+            "status": "unknown",
+            "engine": "haystack",
+            "data": str(data)
+        }
+
+def _get_model_info() -> Dict[str, Any]:
     """Get information about all loaded models.
     
     Returns:
-        Dictionary mapping model IDs to their last access timestamps
+        Dictionary mapping model IDs to structured model information
     """
-    # Convert the cache info to a proper dictionary
+    # Get raw cache information
     cache_items = _CACHE.info()
     print(f"[ModelManager] Cache info: {cache_items}")
     
-    # Make sure we're returning data in the expected format
-    result = {}
+    # Process each model and format its data consistently
+    result: Dict[str, Dict[str, Any]] = {}
     for model_id, data in cache_items.items():
-        # If data is a timestamp (float), use it directly
-        if isinstance(data, (int, float)):
-            result[model_id] = data
-        # Otherwise convert to a string for JSON compatibility
-        else:
-            result[model_id] = str(data)
+        result[model_id] = _format_model_data(model_id, data)
     
     return result
 
 
-def _debug_cache() -> dict[str, Any]:
+def _debug_cache() -> Dict[str, Any]:
     """Get detailed debug information about the cache state.
     
     This is useful for troubleshooting model loading issues.
@@ -138,7 +194,7 @@ def _shutdown_server() -> str:
         Status message
     """
     # Run this in a separate thread to avoid blocking the response
-    def delayed_shutdown():
+    def delayed_shutdown() -> None:
         # Give time for the response to be sent back
         time.sleep(0.5)
         # Force exit which will trigger the atexit handler
@@ -149,37 +205,100 @@ def _shutdown_server() -> str:
     return "shutdown_initiated"
 
 
-def _handle_request(req: dict[str, Any]) -> dict[str, Any]:
-    """Handle an incoming request from a client.
+def _handle_request(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle a JSON-RPC request.
     
     Args:
-        req: Request dict with action and parameters
+        request: The request dictionary
         
     Returns:
-        Response dict with results
+        The response dictionary
     """
-    action = req.get("action")
-    if action == "ping":
-        return {"result": "pong"}
-    if action == "load":
-        model_id = req["model_id"]
-        device = req.get("device")
-        return {"result": _load_model(model_id, device)}
-    if action == "unload":
-        model_id = req["model_id"]
-        return {"result": _unload_model(model_id)}
-    if action == "info":
-        result = _get_model_info()
-        return {"result": result}
-    if action == "debug":
-        result = _debug_cache()
-        return {"result": result}
-    if action == "shutdown":
-        result = _shutdown_server()
-        return {"result": result}
+    if not isinstance(request, dict):
+        return {"error": "Invalid request format, expected dictionary"}
     
-    # If we get here, it's an unknown action
-    return {"error": f"unknown action {action}"}
+    # Extract the action from the request
+    action = request.get("action")
+    if not action:
+        return {"error": "Missing 'action' in request"}
+    
+    # Process the request based on the action
+    try:
+        if action == "ping":
+            return {"result": "pong"}
+        
+        elif action == "load":
+            # Load a model into memory
+            model_id = request.get("model_id")
+            if not model_id:
+                return {"error": "Missing 'model_id' in load request"}
+            
+            device = request.get("device")
+            load_result = _load_model(model_id, device)
+            return {"result": load_result}
+        
+        elif action == "unload":
+            # Unload a model from memory
+            model_id = request.get("model_id")
+            if not model_id:
+                return {"error": "Missing 'model_id' in unload request"}
+            
+            unload_result = _unload_model(model_id)
+            return {"result": unload_result}
+        
+        elif action == "embed":
+            # Generate embeddings for texts
+            model_id = request.get("model_id")
+            if not model_id:
+                return {"error": "Missing 'model_id' in embed request"}
+            
+            texts = request.get("texts")
+            if not texts:
+                return {"error": "Missing 'texts' in embed request"}
+            
+            # Import embedding function here to avoid circular imports
+            from src.model_engine.engines.haystack.runtime.embedding import calculate_embeddings
+            
+            # Optional parameters
+            pooling_strategy = request.get("pooling", "cls")
+            normalize = request.get("normalize", True)
+            max_length = request.get("max_length")
+            
+            # Generate embeddings
+            result = calculate_embeddings(
+                model_id=model_id,
+                texts=texts,
+                pooling_strategy=pooling_strategy,
+                normalize=normalize,
+                max_length=max_length
+            )
+            return {"result": result}
+        
+        elif action == "info":
+            # Get information about loaded models
+            info = _get_model_info()
+            return {"result": info}
+        
+        elif action == "debug":
+            # Get detailed debug information
+            debug_info = _debug_cache()
+            return {"result": debug_info}
+        
+        elif action == "shutdown":
+            # Shutdown the server
+            result = _shutdown_server()
+            return {"result": result}
+        
+        else:
+            # Unknown action
+            return {"error": f"Unknown action: {action}"}
+        
+    except Exception as e:
+        # Handle any exceptions
+        print(f"[ModelManager] Error handling request: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
 
 def _handle_conn(conn: socket.socket) -> None:
@@ -189,47 +308,56 @@ def _handle_conn(conn: socket.socket) -> None:
         conn: Socket connection to client
     """
     with conn:
-        data = conn.recv(65536)
         try:
-            # Decode and log the request
-            req_str = data.decode()
-            print(f"[ModelManager] Received request: {req_str}")
-            req = json.loads(req_str)
+            data = conn.recv(65536)
             
-            # Process the request
-            resp = _handle_request(req)
-            print(f"[ModelManager] Sending response: {resp}")
-            
-            # Encode and send the response
-            resp_str = json.dumps(resp)
-            print(f"[ModelManager] Encoded response: {resp_str}")
-            conn.sendall(resp_str.encode())
-        except json.JSONDecodeError as e:
-            print(f"[ModelManager] JSON decode error: {e}")
-            resp = {"error": f"Invalid JSON: {str(e)}"}
-            conn.sendall(json.dumps(resp).encode())
+            # Process data if we received any
+            if data:
+                try:
+                    # Parse as JSON
+                    req = json.loads(data.decode())
+                    
+                    # Protect against non-dict input
+                    if not isinstance(req, dict):
+                        resp = {"error": "request must be a JSON object"}
+                    else:
+                        resp = _handle_request(req)
+                except json.JSONDecodeError:
+                    resp = {"error": "invalid JSON"}
+                except Exception as e:
+                    resp = {"error": f"unhandled error: {e}"}
+                    
+                # Send response back to client
+                conn.sendall(json.dumps(resp).encode())
         except Exception as e:  # noqa: BLE001
             print(f"[ModelManager] Error handling request: {e}")
-            resp = {"error": str(e)}
-            conn.sendall(json.dumps(resp).encode())
+            resp = {"error": f"Error: {e}"}
+            try:
+                conn.sendall(json.dumps(resp).encode())
+            except Exception:
+                pass
+
 
 # ---------------------------------------------------------------------------
 # Server mainloop
 # ---------------------------------------------------------------------------
 
-def run_server(socket_path: str = SOCKET_PATH) -> None:
+def run_server(socket_path: Optional[str] = SOCKET_PATH) -> None:
+    # Handle None case with default value
+    actual_socket_path = socket_path if socket_path is not None else SOCKET_PATH
+    
     # Clean up stale socket
-    sock_path = Path(socket_path)
+    sock_path = Path(actual_socket_path)
     if sock_path.exists():
         sock_path.unlink()
 
     server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        server_sock.bind(socket_path)
+        server_sock.bind(actual_socket_path)
     except Exception as e:
-        print(f"[ModelManager] Failed to bind socket {socket_path}: {e}", flush=True)
+        print(f"[ModelManager] Failed to bind socket {actual_socket_path}: {e}", flush=True)
         raise
-    os.chmod(socket_path, 0o660)
+    os.chmod(actual_socket_path, 0o660)
     server_sock.listen()
     print(f"[ModelManager] Listening on {socket_path}", flush=True)
 

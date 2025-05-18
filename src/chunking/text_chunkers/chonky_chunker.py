@@ -1,6 +1,33 @@
 from __future__ import annotations
 
-"""Semantic text chunker using [Chonky](https://github.com/mithril-security/chonky).
+"""Chonky text chunker implementation.
+
+This module implements a chunker based on Chonky, which splits text into
+semantic paragraphs using a transformer model. The chunker maintains semantic coherence
+while creating appropriately sized chunks for embedding generation.
+
+The module provides both direct chunking functions and integration with the Haystack
+model engine for accelerated processing.
+
+Example usage:
+    # Basic usage
+    chunked_document = chunk_text(document)
+    
+    # With custom options
+    chunked_document = chunk_text(
+        document, 
+        max_tokens=1024,
+        output_format="json"
+    )
+    
+    # Batch processing
+    from src.chunking.text_chunkers.chonky_batch import chunk_document_batch
+    chunked_docs = chunk_document_batch(documents)
+
+This module is a core component of the document processing pipeline and is used
+by the ingest orchestrator to prepare documents for embedding generation.
+
+Semantic text chunker using [Chonky](https://github.com/mithril-security/chonky).
 
 This implementation integrates Chonky with the Haystack model engine for efficient model loading
 and management. The model is lazily initialized and managed by the Haystack engine.
@@ -16,33 +43,70 @@ Features:
 - Direct support for Pydantic model instances
 """
 
-from typing import Any, Dict, List, Optional, Union, Tuple, Generator, Callable, Type, cast
-import hashlib
-import uuid
 import logging
-import json
 import os
+import json
+import uuid
+import hashlib
+import re
+import time
 import torch
+from datetime import datetime
+from typing import Dict, List, Optional, Union, Any, Callable, cast, Type, TypeVar, Tuple, Generator
 from functools import lru_cache
 from multiprocessing.pool import ThreadPool
 from contextlib import contextmanager
-
 from pydantic import BaseModel
 
-# Optional imports to handle gracefully
-try:
-    from transformers import AutoTokenizer
-except ImportError as exc:  # pragma: no cover
-    # Not raising here, as the engine may be loading transformers itself
-    AutoTokenizer = None  # type: ignore
+# Import the schema types
+from src.schema.document_schema import DocumentType, SchemaVersion, ChunkMetadata
 
+logger = logging.getLogger(__name__)
+
+# Flag to track if required libraries are available
+_TRANSFORMERS_AVAILABLE = False
+_CHONKY_AVAILABLE = False
+_ENGINE_AVAILABLE = False
+
+# Define a flag to track if transformers is available
+_TRANSFORMERS_AVAILABLE = False
+
+# Try to import from transformers, but don't store the actual AutoTokenizer class yet
 try:
-    from chonky import ParagraphSplitter  # type: ignore
-except ImportError as exc:  # pragma: no cover
+    import transformers
+    # Mark transformers as available if import succeeds
+    _TRANSFORMERS_AVAILABLE = True
+    logger.info("transformers library is available")
+except ImportError as e:
+    # Transformers is not available
+    logger.warning(f"transformers not available: {e}")
+
+# Define a function to get AutoTokenizer when needed
+def get_auto_tokenizer() -> Optional[Any]:
+    """Get the AutoTokenizer class from transformers if available.
+    
+    Returns:
+        Optional[Any]: The AutoTokenizer class if available, None otherwise
+    """
+    if _TRANSFORMERS_AVAILABLE:
+        try:
+            from transformers import AutoTokenizer
+            return AutoTokenizer
+        except ImportError:
+            logger.warning("Failed to import AutoTokenizer")
+            return None
+    return None
+
+# Try to import chonky
+try:
+    from chonky import ParagraphSplitter
+    _CHONKY_AVAILABLE = True
+except ImportError:
+    _CHONKY_AVAILABLE = False
     raise ImportError(
         "Package 'chonky' is required for semantic text chunking.\n"
         "Install with:  pip install chonky"
-    ) from exc
+    )
 
 # Import Haystack model engine
 from src.model_engine.engines.haystack import HaystackModelEngine
@@ -57,21 +121,7 @@ class BaseDocument(BaseModel):
     id: str = ""
     chunks: List[Dict[str, Any]] = []
 
-class ChunkMetadata(BaseModel):
-    """Metadata for document chunks."""
-    id: str
-    parent: str
-    content: str
-    path: str
-    type: str = "text"
-    overlap_context: Optional[Dict[str, Any]] = None
-    symbol_type: str = "paragraph"
-    name: str = ""
-    line_start: int = 0
-    line_end: int = 0
-    token_count: int = 0
-    content_hash: str = ""
-    embedding: Optional[List[float]] = None
+# NOTE: ChunkMetadata is now imported from src.schema.document_schema
 
 # Define our document types
 from typing import Type, TypeVar, cast, Any as TypeAny, Union as TypeUnion
@@ -118,8 +168,8 @@ def get_model_engine() -> Optional[HaystackModelEngine]:
     """
     global _MODEL_ENGINE, _ENGINE_AVAILABLE
     
-    # Return existing engine if already initialized
-    if _MODEL_ENGINE is not None:
+    # Return existing engine if already initialized and running
+    if _MODEL_ENGINE is not None and _ENGINE_AVAILABLE:
         return _MODEL_ENGINE
     
     # Default to engine not available    
@@ -127,8 +177,8 @@ def get_model_engine() -> Optional[HaystackModelEngine]:
     
     try:
         # Create a new model engine instance
+        logger.info("Creating Haystack model engine instance...")
         _MODEL_ENGINE = HaystackModelEngine()
-        logger.info("Created Haystack model engine instance")
         
         # Get chunker configuration
         config = get_chunker_config('chonky')
@@ -139,58 +189,104 @@ def get_model_engine() -> Optional[HaystackModelEngine]:
             logger.info("Auto-start disabled, returning unstarted engine")
             return _MODEL_ENGINE
         
-        # Try to start the engine
-        start_success = False
-        try:
-            _MODEL_ENGINE.start()
-            logger.info("Started Haystack model engine")
-            start_success = True
-        except Exception as e:
-            logger.warning(f"Failed to start Haystack model engine: {e}")
+        # Try to start the engine with simple error handling
+        logger.info("Starting Haystack model engine...")
+        # First, initialize the success flag to False
+        model_engine_started = False
         
-        if not start_success:
-            return _MODEL_ENGINE
-            
-        # Client checks
-        has_client = hasattr(_MODEL_ENGINE, "client")
-        if not has_client:
-            logger.warning("Haystack model engine has no client attribute")
-            return _MODEL_ENGINE
-            
-        client_exists = _MODEL_ENGINE.client is not None
-        if not client_exists:
-            logger.warning("Haystack model engine client is None")
-            return _MODEL_ENGINE
-            
-        # Get client reference (safe now that we've checked)
-        client = _MODEL_ENGINE.client
-        
-        # Check ping method
-        has_ping = hasattr(client, "ping")
-        if not has_ping:
-            logger.warning("Haystack model engine client has no ping method")
-            return _MODEL_ENGINE
-            
-        # Try to ping
-        ping_success = False
         try:
-            # We've already checked client exists and has ping attribute
-            # Just need to check if it's callable
-            ping_method = getattr(client, "ping")
-            if callable(ping_method):
-                ping_result = ping_method()
-                if ping_result == "pong":
-                    logger.info("Haystack model engine is available")
-                    _ENGINE_AVAILABLE = True
-                    ping_success = True
-                else:
-                    logger.warning(f"Haystack model engine ping returned {ping_result}")
-            else:
-                logger.warning("Ping method is not callable")
+            # Start the engine and capture the result
+            start_result = _MODEL_ENGINE.start()
+            try:
+                # Try to get the model engine client
+                retries = 0
+                max_retries = 5
+                model_engine_started = False
+                
+                # Loop until we have a client or exceed max retries
+                while retries < max_retries and not model_engine_started:
+                    # Check if the client exists, which indicates the engine is likely ready
+                    client_exists = hasattr(_MODEL_ENGINE, "client") and _MODEL_ENGINE.client is not None
+                    
+                    if client_exists:
+                        model_engine_started = True
+                        logger.info("Model engine client initialized successfully")
+                    else:
+                        # Print waiting message and sleep if client isn't available
+                        logger.info(f"Waiting for model engine startup (attempt {retries+1}/{max_retries})")
+                        time.sleep(1)
+                        retries += 1
+                
+                # Now check if we have a working engine
+                if model_engine_started:
+                    # The engine seems to be started, try to ping it
+                    logger.info("Attempting to ping Haystack model engine")
+                    
+                    # Check if client exists before attempting to ping
+                    has_client = hasattr(_MODEL_ENGINE, "client") and _MODEL_ENGINE.client is not None
+                    
+                    if has_client:
+                        # Simplified approach to ping the engine with separate methods
+                        logger.debug("Attempting to ping model engine client")
+                        
+                        # Define helper to check ping in a separate function - this avoids nesting issues
+                        def check_ping_connection() -> bool:
+                            """Helper function to check ping connection with proper type handling
+                            
+                            Returns:
+                                bool: True if connection is successful, False otherwise
+                            """
+                            # First check if model engine exists at all
+                            if _MODEL_ENGINE is None:
+                                logger.warning("Model engine is None")
+                                return False
+                                
+                            # Check if client exists
+                            engine_client = getattr(_MODEL_ENGINE, 'client', None)
+                            if engine_client is None:
+                                logger.warning("Haystack model engine client is None")
+                                return False
+                                
+                            # Client exists but no ping method
+                            if not hasattr(engine_client, 'ping'):
+                                logger.warning("Haystack model engine client has no ping method")
+                                return False
+                                
+                            # Try to ping
+                            try:
+                                # Use the client reference we've verified
+                                ping_result = engine_client.ping()
+                                
+                                # Check ping result
+                                if ping_result == "pong":
+                                    logger.info("Successfully connected to Haystack model engine")
+                                    return True
+                                else:
+                                    logger.warning(f"Unexpected response from Haystack engine: {ping_result}")
+                                    return False
+                            except Exception as e:
+                                logger.warning(f"Error pinging Haystack model engine: {e}")
+                                return False
+                        
+                        # Use the helper function to set the engine availability
+                        try:
+                            _ENGINE_AVAILABLE = check_ping_connection()
+                        except Exception as e:
+                            logger.warning(f"Error checking ping connection: {e}")
+                            _ENGINE_AVAILABLE = False
+                    else:
+                        logger.warning("Haystack model engine client is None after startup")
+            except Exception as e:
+                import traceback
+                logger.warning(f"Error starting Haystack model engine: {e}\n{traceback.format_exc()}")
         except Exception as e:
-            logger.warning(f"Haystack model engine ping failed: {e}")
+            import traceback
+            logger.warning(f"Error initializing Haystack model engine: {e}\n{traceback.format_exc()}")
+        
+        # We've already attempted to ping in the previous block
+        # No need for a second ping attempt
             
-        # Return the engine regardless of ping result
+        # Return the engine
         return _MODEL_ENGINE
         
     except Exception as e:
@@ -220,6 +316,7 @@ def _get_splitter_with_engine(model_id: str, device: str = "cuda") -> ParagraphS
     # Check if we have a cached splitter for this model
     cache_key = f"{model_id}_{device}"
     if cache_key in _SPLITTER_CACHE:
+        logger.info(f"Using cached splitter for {model_id} on {device}")
         return _SPLITTER_CACHE[cache_key]
     
     # Get chunker configuration
@@ -228,31 +325,57 @@ def _get_splitter_with_engine(model_id: str, device: str = "cuda") -> ParagraphS
     # Check if caching is enabled
     use_cache = config.get('use_cache', True)
     
-    # Get model engine
-    engine = get_model_engine()
-    if engine is None:
-        raise RuntimeError("Failed to initialize model engine")
-    
-    # Load the model
+    # Create the splitter first using Chonky's built-in model loading
+    # This approach works better with the current version of Chonky 
+    # which expects to control the model loading process
     try:
-        # Log model loading
-        logger.info(f"Loading model {model_id} on {device}")
+        # Make sure we have model ID first (this ensures we have a valid model_id in all code paths)
+        if not model_id:
+            model_id = "mirth/chonky_modernbert_large_1"  # Default Chonky model
+            
+        # Now verify that transformers is available
+        # This is a critical requirement for Chonky to work properly
+        if not _TRANSFORMERS_AVAILABLE:
+            msg = f"transformers library is not available - cannot use model {model_id}"
+            logger.warning(msg)
+            # Raise an ImportError to be caught by the outer exception handler
+            raise ImportError(msg)
+            
+        # Get the AutoTokenizer class
+        AutoTokenizer = get_auto_tokenizer()
+        if AutoTokenizer is None:
+            msg = f"Failed to import AutoTokenizer - cannot use model {model_id}"
+            logger.warning(msg)
+            # Raise an ImportError to be caught by the outer exception handler
+            raise ImportError(msg)
         
-        # Load the model with the engine
-        result = engine.load_model(model_id, device=device)
-        logger.info(f"Model loading result: {result}")
+        logger.info(f"Creating ParagraphSplitter with model {model_id} on {device}")
         
-        # Create the splitter
-        splitter = ParagraphSplitter(model_id)
-        
-        # Cache the splitter if caching is enabled
-        if use_cache:
-            _SPLITTER_CACHE[cache_key] = splitter
-        
-        return splitter
+        try:
+            # Attempt to create the splitter
+            splitter_config = {"device": device}
+            splitter = ParagraphSplitter(model_id, **splitter_config)
+            logger.info(f"Successfully created ParagraphSplitter with model {model_id}")
+            
+            # Cache the splitter if caching is enabled
+            if use_cache:
+                _SPLITTER_CACHE[cache_key] = splitter
+                logger.info(f"Cached splitter for {model_id}")
+            
+            return splitter
+            
+        except Exception as inner_e:
+            # Handle specific ParagraphSplitter creation errors
+            logger.error(f"Error initializing ParagraphSplitter with model {model_id}: {inner_e}")
+            # Re-raise to be caught by outer exception handler
+            raise
+    
     except Exception as e:
-        logger.error(f"Error loading model {model_id}: {e}")
-        raise RuntimeError(f"Failed to load model {model_id}: {e}")
+        # This outer exception handler catches both ImportError from earlier checks
+        # and any exceptions re-raised from the inner try-except block
+        logger.error(f"Failed to create ParagraphSplitter with model {model_id}: {e}")
+        logger.error(f"Falling back to simple chunking without semantic model")
+        raise RuntimeError(f"Failed to create semantic chunker with model {model_id}: {e}")
 
 
 def _hash_path(path: str) -> str:
@@ -263,6 +386,12 @@ def _hash_path(path: str) -> str:
 @contextmanager
 def ensure_model_engine() -> Generator[Optional[HaystackModelEngine], None, None]:
     """Context manager to ensure model engine is started and properly cleaned up."""
+    global _ENGINE_AVAILABLE
+    if not _ENGINE_AVAILABLE:
+        logger.warning("Model engine is not available. Using fallback methods.")
+        yield None
+        return
+        
     engine = get_model_engine()
     try:
         yield engine
@@ -272,116 +401,151 @@ def ensure_model_engine() -> Generator[Optional[HaystackModelEngine], None, None
 
 
 def chunk_text(
-    document: Union[Dict[str, Any], BaseDocument, DocumentSchema], 
-    *, 
-    max_tokens: int = 2048, 
-    output_format: str = "python"
-) -> Union[List[Dict[str, Any]], str]:
-    """Split plain-text/Markdown document into semantic paragraphs using Chonky.
+    content: str, 
+    doc_id: Optional[str] = None,
+    path: str = "unknown",
+    doc_type: str = "text",
+    max_tokens: int = 2048,
+    output_format: str = "document",
+    model_id: str = "mirth/chonky_modernbert_large_1"  # Add default model_id
+) -> Union[Dict[str, Any], DocumentSchemaType]:
+    """Chunk a text document into semantically coherent paragraphs.
     
-    Parameters
-    ----------
-    document:
-        Pre-processed document dict or Pydantic model instance. 
-        Must contain ``content`` and ``path`` keys or attributes.
-    max_tokens:
-        Token budget for each chunk (default comes from config).
-    output_format:
-        Output format of the chunks. Can be "python" (dict), "pydantic" (ChunkMetadata), or "json" (str).
-    
-    Returns
-    -------
-    Union[List[Dict[str, Any]], List[ChunkMetadata], str]
-        List of chunk dictionaries, ChunkMetadata instances, or JSON string, depending on output_format
+    Args:
+        content: Text content to chunk
+        doc_id: Document ID (will be auto-generated if None)
+        path: Path to the document
+        doc_type: Type of document
+        max_tokens: Maximum tokens per chunk
+        output_format: Output format, one of "document", "json", "dict"
+        model_id: ID of the model to use for chunking (default is Chonky's model)
+        
+    Returns:
+        Chunked document in the specified format
     """
+    # Start detailed logging
+    doc_id_log = doc_id if doc_id else 'new document'
+    logger.info(f"Starting chunk_text for document: {doc_id_log}")
+    
+    # Check if Chonky is available
+    if not _CHONKY_AVAILABLE:
+        logger.warning("Chonky package not available. Using basic fallback chunking.")
+    
+    if not content or not content.strip():
+        logger.warning("Empty content provided to chunk_text")
+        if output_format == "document":
+            return DocumentSchema(
+                id=doc_id or str(uuid.uuid4()),
+                content="",
+                source=path,
+                document_type=DocumentType(doc_type),
+                schema_version=SchemaVersion.V2,
+                title=None,
+                author=None,
+                created_at=datetime.now(),
+                updated_at=None,
+                metadata={},
+                embedding=None,
+                embedding_model=None,
+                chunks=[],  # Empty chunks for empty content
+                tags=[]
+            )
+        return {
+            "id": doc_id or str(uuid.uuid4()),
+            "content": "",
+            "path": path,
+            "type": doc_type,
+            "chunks": []  # Empty chunks for empty content
+        }
+    
+    # Ensure we have a document ID
+    if doc_id is None:
+        # Generate a deterministic ID based on content
+        content_hash = hashlib.md5(content.encode()).hexdigest()[:8]
+        doc_id = f"doc_{content_hash}"
+    
     # Get chunker configuration
     config = get_chunker_config('chonky')
-    
-    # Extract document content and path
-    if isinstance(document, dict):
-        content = document.get("content", "")
-        path = document.get("path", "unknown")
-        doc_type = document.get("type", "text")
-        doc_id = document.get("id", str(uuid.uuid4()))
-    else:
-        # Handle Pydantic model instance
-        content = getattr(document, "content", "")
-        path = getattr(document, "path", "unknown")
-        doc_type = getattr(document, "type", "text")
-        doc_id = getattr(document, "id", str(uuid.uuid4()))
-    
-    # Validate content
-    if not content or not isinstance(content, str):
-        raise ValueError("Document must contain non-empty string content")
-    
-    # Generate a document ID if not provided
-    if not doc_id:
-        doc_id = f"doc_{_hash_path(path)}"
-    
-    # Use the configured model ID or default
-    model_id = config.get('model_id', 'mirth/chonky_modernbert_large_1')
+    logger.info(f"Loaded chunker config: {config}")
     
     # Use the configured device or default to CUDA
     device = config.get('device', 'cuda')
+    logger.info(f"Using device: {device}")
     
     # Get the configured max tokens or use the provided value
     max_tokens = config.get('max_tokens', max_tokens)
+    logger.info(f"Using max tokens: {max_tokens}")
+    
+    # Check if we have a working model engine
+    logger.info(f"Engine available status: {_ENGINE_AVAILABLE}")
+    if not _ENGINE_AVAILABLE:
+        # Try to initialize the engine one more time
+        logger.info("Attempting to initialize model engine again...")
+        engine = get_model_engine()
+        logger.info(f"Model engine after initialization attempt: {engine}, Available: {_ENGINE_AVAILABLE}")
     
     # Determine if we should use the model engine
     use_engine = config.get('use_model_engine', True) and _ENGINE_AVAILABLE
+    logger.info(f"Using model engine: {use_engine}")
     
     # Initialize chunks list
     chunks = []
     
     try:
         if use_engine:
-            # Use the model engine for chunking
-            with ensure_model_engine():
-                # Get the splitter
+            # Try to use the model engine first
+            if not _ENGINE_AVAILABLE:
+                logger.warning("Model engine is not available. Using fallback methods.")
+            
+            with ensure_model_engine() as engine:
+                # Log that we're using the model engine
+                logger.info(f"Using model engine with model_id: {model_id} on device: {device}")
+                
+                # Get the splitter - this is where we pass the model_id to use
                 splitter = _get_splitter_with_engine(model_id, device)
                 
-                # Split the document
-                paragraphs = splitter.split(content)
+                # Split the document using the loaded model.  ParagraphSplitter is
+                # callable and returns an **iterator of strings**, not an object
+                # exposing a ``split`` method.  We therefore invoke the splitter
+                # directly and materialise the result into a list so that we can
+                # calculate offsets and token counts.
+                logger.info(f"Splitting document with model: {model_id}")
+                paragraphs: List[str] = list(splitter(content))
+                logger.info(f"Split document into {len(paragraphs)} semantic paragraphs")
                 
-                # Create chunks from paragraphs
-                for i, para in enumerate(paragraphs):
-                    # Generate a unique ID for the chunk
+                # Create chunk dictionaries from each paragraph.
+                cumulative_length: int = 0
+                for i, para_text in enumerate(paragraphs):
                     chunk_id = f"{doc_id}_p{i}"
                     
-                    # Estimate start/end offsets based on paragraph position
-                    # This is approximate since we don't have exact character positions from the splitter
-                    if i > 0 and i-1 < len(paragraphs):
-                        prev_content_length = sum(len(p.text) for p in paragraphs[:i])
-                    else:
-                        prev_content_length = 0
-                        
-                    start_offset = prev_content_length
-                    end_offset = start_offset + len(para.text)
+                    start_offset = cumulative_length
+                    end_offset = start_offset + len(para_text)
+                    cumulative_length = end_offset + 2  # +2 for the removed "\n\n" (approx.)
                     
-                    # Create the chunk
                     chunk = {
                         "id": chunk_id,
                         "parent": doc_id,
                         "parent_id": doc_id,  # Required by schema
                         "path": path,
                         "type": doc_type,
-                        "content": para.text,
+                        "content": para_text,
+                        # Chonky does not expose contextual metadata yet; keep empty.
                         "overlap_context": {
-                            "pre": para.pre_context,
-                            "post": para.post_context,
+                            "pre": "",
+                            "post": "",
                             "position": i,
-                            "total": len(paragraphs)
+                            "total": len(paragraphs),
                         },
                         "symbol_type": "paragraph",
                         "name": f"paragraph_{i}",
-                        "chunk_index": i,  # Required by schema
-                        "start_offset": start_offset,  # Required by schema
-                        "end_offset": end_offset,  # Required by schema 
+                        "chunk_index": i,
+                        "start_offset": start_offset,
+                        "end_offset": end_offset,
                         "line_start": 0,
                         "line_end": 0,
-                        "token_count": len(para.text.split()),
-                        "content_hash": hashlib.md5(para.text.encode()).hexdigest(),
-                        "embedding": None
+                        "token_count": len(para_text.split()),
+                        "content_hash": hashlib.md5(para_text.encode()).hexdigest(),
+                        "embedding": None,
                     }
                     
                     chunks.append(chunk)
@@ -435,8 +599,18 @@ def chunk_text(
         # Fallback to basic paragraph splitting
         logger.warning("Using fallback chunking due to error")
         
-        # Split by paragraphs (double newlines)
-        paragraphs = [p for p in content.split("\n\n") if p.strip()]
+        # Split by paragraphs (double newlines) and handle empty paragraphs
+        # First replace multiple newlines with a single newline to normalize
+        normalized_content = re.sub(r'\n\n+', '\n\n', content)
+        
+        # Split by double newlines
+        paragraphs = [p.strip() for p in normalized_content.split('\n\n') if p.strip()]
+        
+        # If we have no paragraphs after splitting, fall back to single chunk
+        if not paragraphs:
+            paragraphs = [content.strip() if content.strip() else ""]
+        
+        # Create chunks from paragraphs
         
         # Create chunks from paragraphs
         for i, para in enumerate(paragraphs):
@@ -468,11 +642,80 @@ def chunk_text(
             chunks.append(chunk)
     
     # Handle different output formats
-    if output_format == "json":
-        return json.dumps(chunks)
+    if output_format == "document":
+        # Create a DocumentSchema
+        doc_schema = DocumentSchema(
+            id=doc_id,
+            content=content,
+            source=path,
+            document_type=DocumentType(doc_type),
+            schema_version=SchemaVersion.V2,
+            title=None,
+            author=None,
+            created_at=datetime.now(),
+            updated_at=None,
+            metadata={},
+            embedding=None,
+            embedding_model=None,
+            chunks=[],  # We'll convert the chunks to ChunkMetadata below
+            tags=[]
+        )
+        
+        # Convert chunks to ChunkMetadata objects
+        chunk_metadata_list: List[ChunkMetadata] = []
+        for chunk_dict in chunks:
+            # Extract chunk attributes with proper type conversion
+            chunk_id = str(chunk_dict.get("id", f"{doc_id}_chunk_{len(chunk_metadata_list)}"))
+            content = str(chunk_dict.get("content", ""))
+            chunk_type_raw = chunk_dict.get("type", "text")
+            chunk_type = str(chunk_type_raw) if chunk_type_raw is not None else "text"
+            start_offset = 0  # Approximate
+            end_offset = len(content) if content else 0
+            
+            # Create chunk metadata
+            chunk_metadata = ChunkMetadata(
+                start_offset=start_offset,
+                end_offset=end_offset,
+                chunk_type=chunk_type,
+                chunk_index=len(chunk_metadata_list),
+                parent_id=doc_id,
+                context_before=None,
+                context_after=None,
+                metadata={
+                    "symbol_type": chunk_dict.get("symbol_type", "paragraph"),
+                    "name": chunk_dict.get("name", ""),
+                    "token_count": chunk_dict.get("token_count", 0),
+                    "content_hash": chunk_dict.get("content_hash", ""),
+                    "content": content,  # Store content as metadata since ChunkMetadata doesn't have content field
+                }
+            )
+            chunk_metadata_list.append(chunk_metadata)
+        
+        # Set the chunks
+        if hasattr(doc_schema, "chunks"):
+            setattr(doc_schema, "chunks", chunk_metadata_list)
+            
+        return doc_schema
+    elif output_format == "json":
+        # Format as a structured document with chunks
+        doc_dict = {
+            "id": doc_id,
+            "content": content,
+            "path": path,  # Keep path for backward compatibility
+            "type": doc_type,  # Keep type for backward compatibility
+            "chunks": chunks
+        }
+        return doc_dict
     else:
         # Default to Python dictionaries
-        return chunks
+        doc_dict = {
+            "id": doc_id,
+            "content": content,
+            "path": path,  # Keep path for backward compatibility
+            "type": doc_type,  # Keep type for backward compatibility
+            "chunks": chunks
+        }
+        return doc_dict
 
 
 def chunk_document_to_json(
@@ -507,7 +750,8 @@ def chunk_document_to_json(
         return result
     elif hasattr(result, 'dict') and callable(getattr(result, 'dict')):
         # Convert BaseDocument or DocumentSchema to dict
-        return result.dict()
+        result_dict: Dict[str, Any] = result.dict()
+        return result_dict
     else:
         # Should never happen, but just in case
         raise TypeError(f"Unexpected result type: {type(result)}")
@@ -542,10 +786,74 @@ def chunk_document_to_schema(
 
     # Convert to DocumentSchema if needed
     if isinstance(result, dict):
-        return DocumentSchema(**result)
+        # Create a DocumentSchema with the right field names
+        doc_id = str(result.get("id", str(uuid.uuid4())))
+        content = str(result.get("content", ""))
+        source = str(result.get("path", result.get("source", "")))
+        doc_type = result.get("type", result.get("document_type", "text"))
+        
+        # Create the DocumentSchema with proper fields
+        doc_schema = DocumentSchema(
+            id=doc_id,
+            content=content,
+            source=source,
+            document_type=DocumentType(str(doc_type)),
+            schema_version=SchemaVersion.V2,
+            title=None,
+            author=None,
+            created_at=datetime.now(),
+            updated_at=None,
+            metadata={},
+            embedding=None,
+            embedding_model=None,
+            chunks=[],  # Will add chunks later
+            tags=[]
+        )
+        
+        # Convert chunks to ChunkMetadata objects
+        chunk_metadata_list: List[ChunkMetadata] = []
+        chunks = result.get("chunks", [])
+        for i, chunk_dict in enumerate(chunks):
+            if isinstance(chunk_dict, dict):
+                # Extract chunk attributes with fallbacks
+                chunk_content = str(chunk_dict.get("content", ""))
+                chunk_type_raw = chunk_dict.get("type", "text")
+                chunk_type = str(chunk_type_raw) if chunk_type_raw is not None else "text"
+                
+                # Calculate offsets
+                start_offset = 0
+                end_offset = len(chunk_content) if chunk_content else 0
+                
+                # Create chunk metadata
+                chunk_metadata = ChunkMetadata(
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                    chunk_type=chunk_type,
+                    chunk_index=i,
+                    parent_id=doc_id,
+                    context_before=None,
+                    context_after=None,
+                    metadata={
+                        "symbol_type": chunk_dict.get("symbol_type", "paragraph"),
+                        "name": chunk_dict.get("name", ""),
+                        "token_count": chunk_dict.get("token_count", 0),
+                        "content_hash": chunk_dict.get("content_hash", ""),
+                        "content": chunk_content,
+                    }
+                )
+                chunk_metadata_list.append(chunk_metadata)
+        
+        # Set the chunks
+        if hasattr(doc_schema, "chunks"):
+            setattr(doc_schema, "chunks", chunk_metadata_list)
+            
+        return doc_schema
+        
     elif hasattr(result, 'dict') and callable(getattr(result, 'dict')):
-        # Convert BaseDocument to dict, then to DocumentSchema
-        return DocumentSchema(**result.dict())
+        # For BaseDocument, first convert to dict and then use the logic above
+        doc_dict = result.dict()
+        return chunk_document_to_schema(doc_dict)
+        
     elif isinstance(result, DocumentSchema):
         # Already a DocumentSchema
         return result
@@ -577,7 +885,7 @@ def chunk_document(
     document:
         Document to chunk (dictionary or Pydantic model)
     max_tokens:
-        Maximum tokens per chunk
+        Maximum number of tokens per chunk
     return_pydantic:
         Whether to return a Pydantic model (True) or dictionary (False)
     save_to_disk:
@@ -609,10 +917,45 @@ def chunk_document(
         chunks = chunk_python_code(doc_dict, max_tokens=max_tokens)
     else:
         # For text documents, use the text chunker
-        chunks = chunk_text(doc_dict, max_tokens=max_tokens)
+        # Get chunker configuration to extract the model_id
+        config = get_chunker_config('chonky')
+        model_id = config.get('model_id', 'mirth/chonky_modernbert_large_1')
+        
+        # Log model ID for debugging
+        logger.info(f"Using model_id for chunking: {model_id}")
+        
+        # Extract the necessary document fields
+        content = doc_dict.get("content", "")
+        doc_id = doc_dict.get("id", None)
+        path = doc_dict.get("path", "unknown")
+        doc_type = doc_dict.get("type", "text")
+        
+        # Log content details for debugging
+        content_len = len(content) if content else 0
+        logger.info(f"Processing document content of length {content_len}")
+        
+        # Call chunk_text with extracted parameters, explicitly requesting dict format
+        chunked_result = chunk_text(
+            content=content,
+            doc_id=doc_id,
+            path=path,
+            doc_type=doc_type,
+            max_tokens=max_tokens,
+            output_format="dict",  # Explicitly request dictionary format
+            model_id=model_id
+        )
     
-    # Update the document with chunks
-    doc_dict["chunks"] = chunks
+    # Extract the chunks from the result and update the document
+    if isinstance(chunked_result, dict) and "chunks" in chunked_result:
+        # Use the chunks from the dict result
+        doc_dict["chunks"] = chunked_result["chunks"]
+    elif hasattr(chunked_result, "chunks"):
+        # Extract chunks from a Pydantic model
+        doc_dict["chunks"] = getattr(chunked_result, "chunks", [])
+    else:
+        # If for some reason we didn't get chunks, set an empty list
+        logger.warning(f"Unexpected result type from chunk_text: {type(chunked_result)}")
+        doc_dict["chunks"] = []
     
     # Save to disk if requested
     if save_to_disk:

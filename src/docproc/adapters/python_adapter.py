@@ -89,11 +89,11 @@ class PythonAdapter(BaseAdapter):
         
         logger.info(f"Initialized PythonAdapter with create_symbol_table={self.create_symbol_table}, analyze_calls={self.analyze_calls}")
 
-    def process(self, file_path: Path, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def process(self, file_path: Union[str, Path], options: Optional[Union[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Process a source-code file.
 
         Args:
-            file_path: Path to the source code file
+            file_path: Path to the source code file (as string or Path object)
             options: Optional processing options
 
         Returns:
@@ -103,34 +103,44 @@ class PythonAdapter(BaseAdapter):
             FileNotFoundError: If the specified file doesn't exist
             ValueError: If there's an error reading or parsing the file
         """
-        process_options = {**self.options, **(options or {})}
+        # Handle options based on type
+        process_options = dict(self.options)
+        if options is not None:
+            if isinstance(options, dict):
+                process_options.update(options)
+            elif isinstance(options, str):
+                # Handle string options (e.g., format specification)
+                process_options["format"] = options
 
-        if not file_path.exists():
-            raise FileNotFoundError(f"Code file not found: {file_path}")
+        # Convert to Path object if string
+        path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+
+        if not path_obj.exists():
+            raise FileNotFoundError(f"Code file not found: {path_obj}")
 
         # Get file extension and determine language
         # Make sure language is consistently set to "python" for Python files
-        if file_path.suffix.lower() == ".py":
+        if path_obj.suffix.lower() == ".py":
             language = "python"
         else:
-            language = file_path.suffix.lstrip(".").lower() or "unknown"
+            language = path_obj.suffix.lstrip(".").lower() or "unknown"
         
         # Read file content
         encoding = process_options.get("encoding", "utf-8")
         try:
-            source = file_path.read_text(encoding=encoding)
+            source = path_obj.read_text(encoding=encoding)
         except UnicodeDecodeError:
             # Fallback to binary read then decode ignoring errors
-            source = file_path.read_bytes().decode("utf-8", errors="ignore")
+            source = path_obj.read_bytes().decode("utf-8", errors="ignore")
 
         # Generate a stable ID for the document
-        doc_id = f"code_{hashlib.md5(str(file_path).encode()).hexdigest()[:8]}"
+        doc_id = f"code_{hashlib.md5(str(path_obj).encode()).hexdigest()[:8]}"
         
         # Extract metadata
         metadata = self.extract_metadata(source)
         metadata["language"] = language
         metadata["file_size"] = len(source)
-        metadata["file_path"] = str(file_path)
+        metadata["file_path"] = str(path_obj)
         metadata["format"] = "python"
         
         # Extract entities
@@ -148,7 +158,7 @@ class PythonAdapter(BaseAdapter):
         # Basic document structure
         document: Dict[str, Any] = {
             "id": doc_id,
-            "source": str(file_path),
+            "source": str(path_obj),
             "format": "python",  # Original document format 
             "content": source,
             "content_format": "python",  # How the content is stored in this JSON
@@ -159,7 +169,7 @@ class PythonAdapter(BaseAdapter):
         
         # Special handling for Python files
         if language == "python" and self.create_symbol_table:
-            python_data = self._process_python_file(file_path, source)
+            python_data = self._process_python_file(path_obj, source)
             
             # Update document with Python-specific data
             if python_data:
@@ -186,7 +196,7 @@ class PythonAdapter(BaseAdapter):
         
         return document
     
-    def process_text(self, text: str, options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def process_text(self, text: str, options: Optional[Union[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Process Python text content.
         
@@ -197,7 +207,14 @@ class PythonAdapter(BaseAdapter):
         Returns:
             Dictionary with processed content and metadata
         """
-        process_options = {**self.options, **(options or {})}
+        # Handle options based on type
+        process_options = dict(self.options)
+        if options is not None:
+            if isinstance(options, dict):
+                process_options.update(options)
+            elif isinstance(options, str):
+                # Handle string options (e.g., format specification)
+                process_options["format"] = options
         
         # Generate a stable document ID
         doc_id = f"python_text_{hashlib.md5(text[:100].encode()).hexdigest()[:8]}"
@@ -234,7 +251,7 @@ class PythonAdapter(BaseAdapter):
             logger.error(f"Error processing Python text: {e}", exc_info=True)
             raise ValueError(f"Error processing Python text: {str(e)}")
     
-    def extract_entities(self, content: Union[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def extract_entities(self, content: Union[str, Dict[str, Any]], options: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Extract entities from Python content.
         
@@ -352,7 +369,7 @@ class PythonAdapter(BaseAdapter):
         
         return entities
     
-    def extract_metadata(self, content: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    def extract_metadata(self, content: Union[str, Dict[str, Any]], options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Extract metadata from Python content.
         
@@ -418,7 +435,7 @@ class PythonAdapter(BaseAdapter):
     # convert_to_markdown and convert_to_text methods were removed as they are outside
     # the core functionality of the document processing pipeline
     
-    def _process_python_file(self, file_path: Path, source: str) -> Optional[Dict[str, Any]]:
+    def _process_python_file(self, file_path: Union[str, Path], source: str) -> Dict[str, Any]:
         """Process a Python file, extracting AST nodes, relationships, and metadata.
         
         Args:
@@ -435,22 +452,24 @@ class PythonAdapter(BaseAdapter):
             # Generate unique ID for module
             module_id = f"module_{hashlib.md5(str(file_path).encode()).hexdigest()[:8]}"
             
-            # Extract module docstring if present
-            module_docstring = ast.get_docstring(tree)
+            # Generate a module ID based on file path for linking
+            path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+            module_name = path_obj.stem
             
             # Create entities dictionary with module as the first entry
             entities: Dict[str, Dict[str, Any]] = {
                 module_id: {
                     "type": "module",
-                    "name": file_path.stem,
+                    "name": module_name,
                     "path": str(file_path),
-                    "docstring": module_docstring,
+                    "docstring": ast.get_docstring(tree),
                     "contains": []  # Will be filled with entity IDs
                 }
             }
             
             # Extract all code entities (functions, classes, imports, variables)
-            self._extract_entities(tree, file_path, entities, module_id)
+            path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+            self._extract_entities(tree, path_obj, entities, module_id)
             
             # Build relationships between entities
             relationships = self._build_entity_relationships(entities)

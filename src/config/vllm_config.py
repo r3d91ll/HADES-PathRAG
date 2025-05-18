@@ -233,3 +233,49 @@ class VLLMConfig(BaseModel):
             return self.ingestion_models[model_alias]
         else:
             raise ValueError(f"Invalid mode '{mode}', must be 'inference' or 'ingestion'")
+
+
+# Function to construct vLLM server command
+def make_vllm_command(
+    server_config: VLLMServerConfig,
+    model_id: Optional[str] = None # Allow specifying a model to load at startup
+) -> List[str]:
+    """
+    Construct the command-line arguments for launching the vLLM OpenAI API server.
+
+    Args:
+        server_config: The server configuration settings.
+        model_id: Optional model ID to load immediately.
+
+    Returns:
+        A list of strings representing the command-line arguments.
+    """
+    cmd = [
+        "python", "-m", "vllm.entrypoints.openai.api_server",
+        "--host", str(server_config.host),
+        "--port", str(server_config.port),
+        "--tensor-parallel-size", str(server_config.tensor_parallel_size),
+        "--gpu-memory-utilization", str(server_config.gpu_memory_utilization),
+        "--dtype", server_config.dtype,
+    ]
+
+    if server_config.max_model_len is not None:
+        cmd.extend(["--max-model-len", str(server_config.max_model_len)])
+
+    # vLLM requires a model to be specified at startup
+    if not model_id:
+         # Attempt to get a default model if none provided
+         # This logic might need refinement based on how defaults are handled
+         default_model_candidates = list(VLLMConfig().inference_models.values()) + \
+                                    list(VLLMConfig().ingestion_models.values())
+         if default_model_candidates:
+             model_id = default_model_candidates[0].model_id
+         else:
+             raise ValueError("Cannot determine a default model; a model_id must be provided to start the vLLM server.")
+
+    cmd.extend(["--model", model_id])
+
+    # Add other potential arguments based on VLLMServerConfig or future needs
+    # e.g., --trust-remote-code, --swap-space, etc.
+
+    return cmd

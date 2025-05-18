@@ -53,7 +53,7 @@ class BaseDocument(BaseModel):
     content: str = Field(..., description="Processed document content")
     content_type: str = Field("markdown", description="Format of the content (e.g., 'markdown', 'text')")
     format: str = Field(..., description="Format of the original document (e.g., 'python', 'pdf')")
-    raw_content: str = Field(..., description="Original unprocessed document content")
+    raw_content: Optional[str] = Field(None, description="Original unprocessed document content (deprecated)")
     metadata: BaseMetadata = Field(..., description="Document metadata")
     entities: List[BaseEntity] = Field(default_factory=list, description="Entities extracted from the document")
     error: Optional[str] = Field(None, description="Error message if processing failed")

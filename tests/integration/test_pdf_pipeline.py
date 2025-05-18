@@ -20,6 +20,9 @@ from src.docproc.manager import DocumentProcessorManager
 from src.embedding.base import get_adapter
 from src.storage.arango.connection import ArangoConnection
 
+# Explicitly import the ModernBERT adapter to ensure it gets registered
+from src.embedding.adapters.modernbert_adapter import ModernBERTEmbeddingAdapter
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,11 +54,18 @@ async def test_pdf_pipeline():
     
     # Initialize the pipeline components
     doc_processor = DocumentProcessorManager()
-    embedding_adapter = get_adapter("vllm")  # This will use the default adapter if vllm is not available
+    
+    # Use our new ModernBERT adapter for embeddings
+    embedding_adapter = get_adapter(
+        "modernbert", 
+        pooling_strategy="cls",
+        max_length=8192,
+        normalize_embeddings=True
+    )
     
     # Create a connection to ArangoDB with a unique database name for testing
     connection = ArangoConnection(
-        database="pdf_test_db",
+        db_name="pdf_test_db",
         host=os.environ.get("ARANGO_HOST", "http://localhost:8529"),
         username=os.environ.get("ARANGO_USERNAME", "root"),
         password=os.environ.get("ARANGO_PASSWORD", ""),
@@ -115,6 +125,16 @@ async def test_pdf_pipeline():
         embeddings = await embed_cursor.all()
         logger.info(f"Embeddings: {len(embeddings)}")
         
+        # Validate ModernBERT embedding dimensions
+        if embeddings:
+            # Check a sample embedding's dimensions
+            sample_embedding = embeddings[0].get('vector', [])
+            embedding_dim = len(sample_embedding)
+            logger.info(f"ModernBERT embedding dimensions: {embedding_dim}")
+            
+            # ModernBERT should produce 768-dimensional embeddings
+            assert embedding_dim == 768, f"Expected ModernBERT embedding dimension 768, got {embedding_dim}"
+        
         # Check if we have relationships
         edge_cursor = await connection.db.aql.execute(
             "FOR edge IN edges RETURN edge"
@@ -122,12 +142,60 @@ async def test_pdf_pipeline():
         edges = await edge_cursor.all()
         logger.info(f"Edges: {len(edges)}")
         
+        # Get processing metadata to check embedding performance
+        meta_cursor = await connection.db.aql.execute(
+            "FOR doc IN nodes FILTER doc.type == 'document' AND doc.processing_metadata != null "  
+            "RETURN doc.processing_metadata"
+        )
+        processing_metadata = await meta_cursor.all()
+        
+        # Extract embedding performance metrics if available
+        embedding_metrics = {}
+        if processing_metadata:
+            for meta in processing_metadata:
+                if meta and 'embedding' in meta:
+                    embedding_info = meta['embedding']
+                    for key, value in embedding_info.items():
+                        # Aggregate the metrics
+                        if key in embedding_metrics:
+                            if isinstance(value, (int, float)):
+                                embedding_metrics[key] += value
+                            else:
+                                embedding_metrics[key] = value
+                        else:
+                            embedding_metrics[key] = value
+        
+        logger.info(f"Embedding performance metrics: {embedding_metrics}")
+        
+        # Verify ModernBERT is being used
+        if embedding_metrics:
+            adapter_name = embedding_metrics.get('adapter', '')
+            assert 'modernbert' in adapter_name.lower(), f"Expected ModernBERT adapter, got {adapter_name}"
+        
+        # Calculate performance metrics
+        benchmark_data = {
+            "documents_per_second": stats.processed_files / stats.elapsed_time if stats.elapsed_time > 0 else 0,
+            "chunks_per_second": len(chunks) / stats.elapsed_time if stats.elapsed_time > 0 else 0,
+            "embedding_dimensions": embedding_dim if embeddings else 0,
+            "average_tokens_per_chunk": sum(len(c.get('content', '').split()) for c in chunks) / len(chunks) if chunks else 0
+        }
+        
+        # Organize test results for alignment with standard protocol
         return {
             "stats": stats.to_dict(),
-            "documents": len(documents),
-            "chunks": len(chunks),
-            "embeddings": len(embeddings),
-            "edges": len(edges),
+            "counts": {
+                "documents": len(documents),
+                "chunks": len(chunks),
+                "embeddings": len(embeddings),
+                "edges": len(edges),
+            },
+            "embedding": {
+                "adapter": embedding_metrics.get('adapter', 'modernbert'),
+                "model": embedding_metrics.get('model', 'answerdotai/ModernBERT-base'),
+                "dimensions": embedding_dim if embeddings else 0,
+                "pooling_strategy": embedding_metrics.get('pooling_strategy', 'cls')
+            },
+            "benchmark": benchmark_data
         }
     
     finally:

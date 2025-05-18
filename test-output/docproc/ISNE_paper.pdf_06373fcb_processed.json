@@ -1,0 +1,12 @@
+{
+  "id": "ISNE_paper.pdf_06373fcb",
+  "path": "/home/todd/ML-Lab/Olympus/HADES-PathRAG/test-data/ISNE_paper.pdf.txt",
+  "content": "# Content from ISNE_paper.pdf\n\nThis is a placeholder for the content of the PDF file that could not be \nprocessed directly. In a production system, this would be replaced with \nactual text extracted from the PDF using appropriate libraries.\n\n## Document Information\n\n- **Filename**: ISNE_paper.pdf\n- **Path**: /home/todd/ML-Lab/Olympus/HADES-PathRAG/test-data/ISNE_paper.pdf\n- **Size**: 509475 bytes\n\n## Sample Structure\n\n### Abstract\n\nThis is a placeholder abstract. The real content would be extracted from the PDF.\n\n### Introduction\n\nThis is a placeholder introduction. The real content would be extracted from the PDF.\n\n### Methodology\n\nThis is a placeholder methodology section. The real content would be extracted from the PDF.\n\n### Results\n\nThis is a placeholder results section. The real content would be extracted from the PDF.\n\n### Conclusion\n\nThis is a placeholder conclusion. The real content would be extracted from the PDF.\n",
+  "type": "text",
+  "metadata": {
+    "format": "text",
+    "language": "en",
+    "creation_date": "2025-05-17",
+    "author": "HADES-PathRAG Team"
+  }
+}

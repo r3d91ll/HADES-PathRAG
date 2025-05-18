@@ -1,0 +1,39 @@
+{
+  "test_date": "2025-05-17 21:58:37",
+  "configurations_tested": [
+    "modernbert-cpu"
+  ],
+  "pdfs_processed": 2,
+  "results": [
+    {
+      "filename": "ISNE_paper.pdf",
+      "chunks": 11,
+      "total_tokens": 9400,
+      "avg_tokens_per_chunk": 854.5454545454545,
+      "chunks_with_embeddings": 11,
+      "embedding_dimensions": 768,
+      "embedding_model": "answerdotai/ModernBERT-base",
+      "pooling_strategy": "cls",
+      "embedding_time_sec": 49.77262210845947,
+      "total_time_sec": 67.24662446975708,
+      "time_per_chunk_sec": 6.113329497250644,
+      "tokens_per_second": 139.7839679555585,
+      "config": "modernbert-cpu"
+    },
+    {
+      "filename": "PathRAG_paper.pdf",
+      "chunks": 20,
+      "total_tokens": 9390,
+      "avg_tokens_per_chunk": 469.5,
+      "chunks_with_embeddings": 20,
+      "embedding_dimensions": 768,
+      "embedding_model": "answerdotai/ModernBERT-base",
+      "pooling_strategy": "cls",
+      "embedding_time_sec": 86.6754240989685,
+      "total_time_sec": 105.42016863822937,
+      "time_per_chunk_sec": 5.2710084319114685,
+      "tokens_per_second": 89.07213981248393,
+      "config": "modernbert-cpu"
+    }
+  ]
+}

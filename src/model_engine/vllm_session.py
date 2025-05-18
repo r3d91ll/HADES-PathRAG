@@ -21,6 +21,50 @@ from src.types.vllm_types import VLLMProcessInfo
 logger = logging.getLogger(__name__)
 
 
+async def get_vllm_base_url(model_alias: str, mode: ModelMode = ModelMode.INFERENCE) -> str:
+    """
+    Get the base URL for a vLLM model API endpoint.
+    
+    This function provides a convenient way to get the base URL for a vLLM model
+    without having to manage the session context manually.
+    
+    Args:
+        model_alias: Alias of the model to use
+        mode: ModelMode (INFERENCE or INGESTION)
+        
+    Returns:
+        Base URL for the model's API
+        
+    Raises:
+        RuntimeError: If unable to get the base URL
+    """
+    try:
+        # Import these here to avoid circular imports
+        from src.config.vllm_config import VLLMConfig
+        
+        # Load the configuration
+        config = VLLMConfig.load_from_yaml()
+        
+        # Get model details from config
+        models = (
+            config.inference_models if mode == ModelMode.INFERENCE
+            else config.ingestion_models
+        )
+        model_config = models.get(model_alias)
+        
+        if not model_config:
+            raise ValueError(f"Model {model_alias} not found in configuration")
+        
+        # Construct the base URL
+        base_url = f"http://{config.server.host}:{model_config.port or config.server.port}"
+        logger.debug(f"Base URL for model {model_alias}: {base_url}")
+        return base_url
+        
+    except Exception as e:
+        logger.error(f"Error getting base URL for model {model_alias}: {e}")
+        raise RuntimeError(f"Failed to get base URL for model {model_alias}: {e}") from e
+
+
 class VLLMProcessManager:
     """
     Manages vLLM processes for the HADES-PathRAG ingestion pipeline.

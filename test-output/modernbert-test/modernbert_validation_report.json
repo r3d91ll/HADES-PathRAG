@@ -1,0 +1,24 @@
+{
+  "test_date": "2025-05-17 21:29:45",
+  "pdfs_processed": 2,
+  "results": [
+    {
+      "filename": "ISNE_paper.pdf",
+      "chunks": 11,
+      "chunks_with_embeddings": 0,
+      "embedding_dimensions": null,
+      "embedding_model": "unknown",
+      "pooling_strategy": "unknown",
+      "processing_time_sec": 0
+    },
+    {
+      "filename": "PathRAG_paper.pdf",
+      "chunks": 20,
+      "chunks_with_embeddings": 0,
+      "embedding_dimensions": null,
+      "embedding_model": "unknown",
+      "pooling_strategy": "unknown",
+      "processing_time_sec": 0
+    }
+  ]
+}
