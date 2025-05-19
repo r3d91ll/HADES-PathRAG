@@ -122,3 +122,4 @@ db.sqlite3
 .windsurfrules
 test-output/markdown_output/
 test-data/*.pdf
+test-output/*

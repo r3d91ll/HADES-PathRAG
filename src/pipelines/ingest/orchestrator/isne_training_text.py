@@ -26,6 +26,7 @@ import time
 import asyncio
 import glob
 import random
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union, Tuple, cast
@@ -208,7 +209,7 @@ class TextTrainingPipeline:
         self.edge_count = 0
         self.training_data = None
         
-    async def process_document(self, pdf_path: Union[str, Path]) -> Optional[Dict[str, Any]]:
+    async def process_document(self, file_path: Union[str, Path]) -> Optional[Dict[str, Any]]:
         """
         Process a document through the document processing module.
         
@@ -216,34 +217,45 @@ class TextTrainingPipeline:
         text format (markdown) with extracted metadata.
         
         Args:
-            pdf_path: Path to the document file
+            file_path: Path to the document file
             
         Returns:
             Normalized document dictionary or None if processing failed
         """
+        path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+        
+        logger.info(f"Processing document: {path_obj}")
+        start_time = time.time()
+        
         try:
-            # Convert path to string if it's a Path object
-            pdf_path_str = str(pdf_path) if isinstance(pdf_path, Path) else pdf_path
-            logger.info(f"Processing document: {pdf_path_str}")
+            # Process document using docproc - this is a synchronous function, not async
+            doc_result = process_document(path_obj)
             
-            # Process the document - this is a synchronous function, not async
-            doc_result = process_document(pdf_path_str)
-            
-            # Generate a unique document ID if not already present
+            # Ensure the document has an ID
             if 'id' not in doc_result:
-                doc_id = f"pdf_{Path(pdf_path_str).stem.lower().replace(' ', '_')}_{int(time.time())}"
+                # Generate a unique ID based on filename and hash
+                file_hash = hashlib.md5(path_obj.name.encode()).hexdigest()[:8]
+                doc_id = f"pdf_{file_hash}_{path_obj.stem.replace(' ', '_')}"
                 doc_result['id'] = doc_id
-                
-            # Save intermediate result if requested
-            if self.save_intermediate_results and self.output_dir:
-                output_path = self.output_dir / f"{doc_result.get('id')}_processed.json"
+            
+            # Add path info to result
+            doc_result['path'] = str(path_obj)
+            
+            # Save processed result to output dir if specified
+            if self.output_dir:
+                output_path = self.output_dir / f"{doc_result['id']}_processed.json"
                 with open(output_path, 'w') as f:
                     json.dump(doc_result, f, indent=2)
                 logger.info(f"Saved processed document to {output_path}")
-                
+            
+            processing_time = time.time() - start_time
+            logger.info(f"Document processing completed in {processing_time:.2f} seconds")
+            
             return doc_result
+        
         except Exception as e:
-            logger.error(f"Error processing document {pdf_path}: {e}")
+            logger.error(f"Error processing document: {e}")
+            logger.warning(f"Failed to process document: {file_path}")
             return None
             
     async def chunk_document(self, doc_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -261,36 +273,78 @@ class TextTrainingPipeline:
         Returns:
             Transformed document with chunks, or None if chunking failed
         """
-        try:
-            # Extract document content and ID
-            content = doc_result.get('content', '')
-            doc_id = doc_result.get('id', f"pdf_{int(time.time())}")
+        if not doc_result:
+            logger.error("No document provided for chunking")
+            return None
             
-            logger.info(f"Chunking document {doc_id} with {len(content)} characters")
+        try:
+            # Get document properties
+            doc_id = doc_result.get('id', f"doc_{os.urandom(4).hex()}")
+            doc_path = doc_result.get('path', 'unknown')
+            
+            logger.info(f"Chunking document {doc_id} with path {doc_path}")
+            
+            # Setup chunking options
+            options = self.chunking_options.copy()
+            
+            # Set document-specific options
+            options["doc_id"] = doc_id
+            options["path"] = doc_path
+            
+            # Prepare for chunking - extract content string
+            doc_content = doc_result.get("content", "")
+            if not doc_content:
+                logger.warning(f"Document {doc_id} has no content")
+                return None
+                
+            logger.info(f"Content length: {len(doc_content)} characters")
             
             # Create a shallow copy of doc_result and remove the full content
             pipeline_result = {k: v for k, v in doc_result.items() if k != 'content'}
             
-            # Add chunks array
-            pipeline_result['chunks'] = []
+            # Process through chunking - using the same approach as the prototype pipeline
+            chunks_result = chunk_text(
+                content=doc_content,
+                doc_id=doc_id,
+                path=doc_path,
+                doc_type=options.get("doc_type", "academic_pdf"),
+                max_tokens=options.get("max_tokens", 1024),
+                output_format=options.get("output_format", "json")
+            )
             
-            # Apply chunking - this is a synchronous function, not async
-            chunking_result = chunk_text(content, **self.chunking_options)
-            chunks = chunking_result.get('chunks', [])
-            
+            # Extract chunks from the chunking result
+            if isinstance(chunks_result, dict) and "chunks" in chunks_result:
+                chunks = chunks_result.get("chunks", [])
+            else:
+                # Handle direct list of chunks
+                chunks = chunks_result if isinstance(chunks_result, list) else []
+                
             logger.info(f"Created {len(chunks)} chunks from document {doc_id}")
             
-            # Add chunks to pipeline result with unique IDs
+            # Add chunks array to pipeline result
+            pipeline_result['chunks'] = []
+            
+            # Add properly formatted chunks to pipeline result
             for idx, chunk in enumerate(chunks):
+                # Handle different chunk formats
+                if isinstance(chunk, dict):
+                    chunk_content = chunk.get('text', chunk.get('content', ''))
+                    chunk_metadata = chunk.get('metadata', {})
+                else:
+                    # If chunk is just a string
+                    chunk_content = str(chunk)
+                    chunk_metadata = {}
+                    
                 chunk_id = f"{doc_id}_chunk_{idx}"
                 pipeline_result['chunks'].append({
                     'id': chunk_id,
-                    'content': chunk['text'],
+                    'content': chunk_content,
                     'metadata': {
                         'seq_num': idx,
-                        'token_count': chunk.get('token_count', 0),
-                        'start_position': chunk.get('start_idx', 0),
-                        'end_position': chunk.get('end_idx', len(chunk.get('text', ''))),
+                        'token_count': chunk_metadata.get('token_count', 0),
+                        'start_position': chunk_metadata.get('start_idx', 0),
+                        'end_position': chunk_metadata.get('end_idx', len(chunk_content)),
+                        **{k: v for k, v in chunk_metadata.items() if k not in ['token_count', 'start_idx', 'end_idx']}
                     }
                 })
             
@@ -310,7 +364,7 @@ class TextTrainingPipeline:
             logger.error(f"Error chunking document: {e}")
             return None
     
-    async def add_embeddings(self, pipeline_result: Dict[str, Any]) -> Dict[str, Any]:
+    async def add_embeddings(self, pipeline_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Add embeddings to document chunks.
         
@@ -323,54 +377,87 @@ class TextTrainingPipeline:
         Returns:
             Further transformed document with embeddings, or original if embedding failed
         """
-        # Skip if embedding is unavailable or no adapter
-        if not EMBEDDING_AVAILABLE or not self.embedding_adapter:
-            logger.warning("Skipping embedding computation - module or adapter not available")
+        if not pipeline_result or "chunks" not in pipeline_result:
+            logger.error("No valid chunks provided for embedding")
             return pipeline_result
-            
+        
+        if not self.embedding_adapter:
+            logger.warning("No embedding adapter configured - skipping embedding generation")
+            return pipeline_result
+        
+        doc_id = pipeline_result.get('id', 'Unknown')
+        logger.info(f"Generating embeddings for document: {doc_id}")
+        start_time = time.time()
+        
         try:
-            doc_id = pipeline_result.get('id', '')
-            chunks = pipeline_result.get('chunks', [])
+            # Extract chunks from the pipeline result
+            chunks = pipeline_result.get("chunks", [])
+            num_chunks = len(chunks)
             
-            if not chunks:
-                logger.warning(f"Document {doc_id} has no chunks - skipping embedding")
+            if num_chunks == 0:
+                logger.warning(f"Document {doc_id} has no chunks to embed")
                 return pipeline_result
                 
-            logger.info(f"Adding embeddings to {len(chunks)} chunks for document {doc_id}")
+            # Extract text content for embedding
+            chunk_texts: List[str] = [chunk.get("content", "") for chunk in chunks]
             
-            # Extract text from chunks for batch processing
-            chunk_texts = [chunk['content'] for chunk in chunks]
+            # Log stats about the chunks being processed
+            total_tokens = sum(len(text.split()) for text in chunk_texts)
+            avg_tokens = total_tokens / num_chunks if num_chunks > 0 else 0
+            logger.info(f"Generating embeddings for {num_chunks} chunks with avg {avg_tokens:.1f} tokens per chunk")
             
-            # Get embeddings from adapter
+            # Generate embeddings using the configured adapter
             embeddings = await self.embedding_adapter.embed(chunk_texts)
             
-            # Add embeddings to chunks
-            for idx, embedding in enumerate(embeddings):
-                if idx < len(chunks):
-                    chunks[idx]['embedding'] = embedding.tolist()
+            # Validate that we received the expected number of embeddings
+            if len(embeddings) != num_chunks:
+                logger.warning(f"Expected {num_chunks} embeddings but received {len(embeddings)}")
             
-            # Update pipeline result
-            pipeline_result['chunks'] = chunks
+            # Update chunks with embeddings, ensuring proper conversion
+            embedding_dim = None
+            for i, embedding in enumerate(embeddings):
+                if i < len(chunks):
+                    # Handle different embedding types (numpy arrays, lists, etc.)
+                    if hasattr(embedding, "tolist"):
+                        embedding_list = embedding.tolist()
+                    else:
+                        embedding_list = list(embedding)
+                    
+                    # Store the first dimension for metadata
+                    if embedding_dim is None and embedding_list:
+                        embedding_dim = len(embedding_list)
+                    
+                    # Add embedding to the chunk
+                    chunks[i]["embedding"] = embedding_list
             
-            # Add embedding metadata
-            if 'processing_metadata' not in pipeline_result:
-                pipeline_result['processing_metadata'] = {}
+            # Update the pipeline result with the enhanced chunks
+            pipeline_result["chunks"] = chunks
+            
+            # Add embedding metadata to the processing metadata
+            if "processing_metadata" not in pipeline_result:
+                pipeline_result["processing_metadata"] = {}
                 
-            pipeline_result['processing_metadata']['embedding'] = {
-                'adapter_name': self.embedding_options.get('adapter_name', 'unknown'),
-                'model_name': self.embedding_options.get('model_name', 'unknown'),
-                'embedding_dim': len(embeddings[0]) if embeddings else 0,
-                'timestamp': datetime.now().isoformat()
+            # Add detailed embedding metadata
+            pipeline_result["processing_metadata"]["embedding"] = {
+                "adapter": getattr(self.embedding_adapter, "name", "unknown"),
+                "embedding_dimensions": embedding_dim,
+                "chunks_embedded": len(embeddings),
+                "timestamp": time.time(),
+                "processing_time_sec": time.time() - start_time
             }
             
-            # Save intermediate result if requested
-            if self.save_intermediate_results and self.output_dir:
+            embedding_time = time.time() - start_time
+            logger.info(f"Embedding generation completed in {embedding_time:.2f} seconds")
+            
+            # Save embedded result if output directory is specified
+            if self.output_dir:
                 output_path = self.output_dir / f"{doc_id}_embedded.json"
                 with open(output_path, 'w') as f:
                     json.dump(pipeline_result, f, indent=2)
-                logger.info(f"Saved document with embeddings to {output_path}")
-                
+                logger.info(f"Embedded document saved to {output_path}")
+            
             return pipeline_result
+            
         except Exception as e:
             logger.error(f"Error adding embeddings: {e}")
             return pipeline_result

@@ -114,7 +114,68 @@ We've implemented pipeline integration that supports both direct data flow and b
 - [x] Added specialized training pipeline for batch processing of document collections
 - [x] File writes occur for checkpoints and model persistence
 - [x] The `isne_training_text.py` module provides full training workflow
-- [x] Optimized for performance with proper CPU resource utilization
+- [x] Optimized for single-threaded CPU resource utilization
+
+## Pipeline Parallelization Implementation
+
+### Parallel Processing Architecture Overview
+
+After reviewing the performance of the current sequential processing pipeline, we need to implement a parallel processing architecture to improve throughput when processing large document collections, particularly for ISNE training which requires processing hundreds of documents.
+
+### Directory Reorganization
+
+- [ ] Restructure orchestration directory for better organization
+  - [ ] Create `src/orchestration/` as main orchestration directory
+  - [ ] Create `src/orchestration/core/` for shared components
+  - [ ] Create `src/orchestration/pipelines/` for specific pipeline implementations
+  - [ ] Move relevant files from `src/pipelines/ingest/orchestrator/`
+
+### Core Components
+
+- [ ] Implement configuration management
+  - [ ] Create `src/config/pipeline_config.yaml` for parallel processing settings
+  - [ ] Add queue configuration with memory limits and backpressure controls
+  - [ ] Implement profile system (high-throughput, balanced, low-memory)
+  - [ ] Create config loader with profile selection
+
+- [ ] Develop queue management system
+  - [ ] Create `src/orchestration/core/queue_manager.py`
+  - [ ] Implement memory-aware queues with backpressure mechanisms
+  - [ ] Add monitoring and metrics collection
+  - [ ] Implement configurable backoff strategies
+
+- [ ] Implement worker management
+  - [ ] Create `src/orchestration/core/parallel_worker.py`
+  - [ ] Implement thread pool with controlled concurrency
+  - [ ] Add error handling and retry mechanisms
+  - [ ] Create monitoring for worker performance
+
+### Pipeline Implementation
+
+- [ ] Develop parallel pipeline architecture
+  - [ ] Create `src/orchestration/pipelines/parallel_pipeline.py`
+  - [ ] Implement document batch processing with thread pools
+  - [ ] Add progress tracking and reporting
+  - [ ] Create pause/resume capabilities for long-running jobs
+
+- [ ] Create modality-specific pipelines
+  - [ ] Implement `src/orchestration/pipelines/text_pipeline.py`
+  - [ ] Add ISNE training and enhancement modes
+  - [ ] Ensure configuration-driven behavior
+
+### Testing and Documentation
+
+- [ ] Develop comprehensive test suite
+  - [ ] Create unit tests for core components (≥85% coverage)
+  - [ ] Add integration tests for end-to-end workflows
+  - [ ] Implement performance benchmarks for various configurations
+  - [ ] Test with varying document collection sizes
+
+- [ ] Create detailed documentation
+  - [ ] Add `orchestration_readme.md` with architecture overview
+  - [ ] Create usage examples for different scenarios
+  - [ ] Document configuration options and their impacts
+  - [ ] Add troubleshooting guide for common issues
 
 ```plaintext
   │   ├── metrics.py
