@@ -1,26 +1,24 @@
 """
-Types module for the ISNE (Inductive Shallow Node Embedding) pipeline.
+Type definitions for the ISNE module.
 
-This module provides type definitions for the core data structures 
-used throughout the ISNE pipeline implementation.
+This package contains type definitions, data models, and related utilities
+for the ISNE (Inductive Shallow Node Embedding) implementation.
 """
 
 from .models import (
-    IngestDocument,
-    IngestDataset,
-    DocumentRelation,
+    DocumentType,
     RelationType,
-    EmbeddingVector,
-    EmbeddingConfig,
-    ISNEConfig
+    IngestDocument,
+    DocumentRelation,
+    LoaderResult,
+    EmbeddingVector
 )
 
 __all__ = [
-    "IngestDocument",
-    "IngestDataset",
-    "DocumentRelation",
-    "RelationType",
-    "EmbeddingVector", 
-    "EmbeddingConfig",
-    "ISNEConfig"
+    'DocumentType',
+    'RelationType',
+    'IngestDocument',
+    'DocumentRelation',
+    'LoaderResult',
+    'EmbeddingVector'
 ]

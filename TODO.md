@@ -1,4 +1,147 @@
-# HADES-PathRAG: Pre-Embedding Model Implementation Tasks
+# HADES-PathRAG: Implementation Tasks
+
+## Priority #1: ISNE (Inductive Shallow Node Embedding) Implementation
+
+### Implementation Plan Overview
+
+After a review of the initial implementation and the original research paper, we've decided to proceed with a complete rewrite of the ISNE module to more accurately reflect the authors' methodology. This plan outlines a comprehensive approach to implementing ISNE as documented in the [original paper](https://link.springer.com/article/10.1007/s40747-024-01545-6)
+
+### Core Components
+
+- [x] Create isne_readme.md in the root of the module directory to track documentation
+- [ ] Set up PyTorch Geometric integration for efficient graph operations
+- [ ] Implement ISNE layer architecture precisely matching the paper's methodology
+- [ ] Create specialized loss functions for structure and feature preservation
+- [ ] Develop training framework with proper neighborhood sampling
+- [ ] Implement evaluation metrics for model validation
+- [ ] Build direct pipeline integration rather than file-based loading
+
+### Pipeline Integration
+
+After examining the current pipeline architecture, we've determined that the ISNE module should integrate directly with the existing data flow rather than relying on file-based loading. Key points:
+
+- The existing pipeline (docproc → chunking → embedding) already maintains data in memory
+- File writes only occur in debug mode or when explicitly requested
+- ISNE should continue this pattern by accepting data directly from the embedding pipeline
+- The `modernbert_loader.py` will be maintained only for offline processing and troubleshooting
+- This approach eliminates unnecessary serialization/deserialization and improves performance
+
+### Module Structure
+
+```plaintext
+src/isne/
+  ├── __init__.py
+  ├── isne_readme.md
+  ├── loaders/
+  │   ├── __init__.py
+  │   ├── modernbert_loader.py  # Only for offline testing/debugging
+  │   └── graph_dataset_loader.py
+  ├── layers/
+  │   ├── __init__.py
+  │   ├── isne_layer.py
+  │   └── isne_attention.py
+  ├── models/
+  │   ├── __init__.py
+  │   └── isne_model.py
+  ├── losses/
+  │   ├── __init__.py
+  │   ├── structural_loss.py
+  │   ├── feature_loss.py
+  │   └── contrastive_loss.py
+  ├── training/
+  │   ├── __init__.py
+  │   ├── sampler.py
+  │   └── trainer.py
+  ├── evaluation/
+  │   ├── __init__.py
+  │   ├── metrics.py
+  │   └── visualizers.py
+  ├── utils/
+  │   ├── __init__.py
+  │   └── geometric_utils.py
+  └── pipeline.py
+```
+
+### Implementation Phases
+
+#### Phase 1: Core Architecture
+
+- [ ] PyTorch Geometric integration
+  - [ ] Set up proper dependencies and imports
+  - [ ] Create utilities for PyG data structure handling
+- [ ] ISNE Layer Implementation
+  - [ ] Implement message passing exactly as in the paper
+  - [ ] Create multi-head attention mechanism
+  - [ ] Add proper gating mechanisms
+- [ ] Base Model Structure
+  - [ ] Set up model architecture with skip connections
+  - [ ] Implement forward pass with proper layer composition
+- [ ] Unit tests for core components
+  - [ ] Test layer forward/backward passes
+  - [ ] Test message passing operations
+
+#### Phase 2: Training & Evaluation
+
+- [ ] Loss Function Implementation
+  - [ ] Implement structural preservation loss
+  - [ ] Implement feature preservation loss
+  - [ ] Create contrastive loss with negative sampling
+- [ ] Training Framework
+  - [ ] Create neighborhood sampler for batch training
+  - [ ] Implement training loop with learning rate scheduling
+  - [ ] Add validation checkpoints
+- [ ] Evaluation Metrics
+  - [ ] Implement link prediction evaluator
+  - [ ] Create node classification metrics
+  - [ ] Add embedding visualization utilities
+- [ ] Integration tests
+  - [ ] Test end-to-end training
+  - [ ] Validate with synthetic datasets
+
+#### Phase 3: Pipeline & Integration
+
+- [ ] ModernBERT Integration
+  - [ ] Refine and optimize the existing ModernBERT loader
+  - [ ] Create pipeline for processing ModernBERT outputs
+- [ ] Database Storage
+  - [ ] Implement ArangoDB storage for enhanced embeddings
+  - [ ] Create retrieval utilities for enhanced embeddings
+- [ ] Documentation
+  - [ ] Create comprehensive module documentation
+  - [ ] Add usage examples and integration guidelines
+- [ ] Performance Benchmarks
+  - [ ] Benchmark against original paper's results
+  - [ ] Measure embedding quality on real documents
+  - [ ] Analyze scalability characteristics
+
+### Quality Assurance Checkpoints
+
+After each implementation phase, we will conduct:
+
+1. **Code Review**
+   - [ ] Run mypy to check for type errors
+   - [ ] Ensure unit test coverage ≥ 85%
+   - [ ] Verify all functions have docstrings
+   - [ ] Remove debugging print statements
+
+2. **Documentation Review**
+   - [ ] Verify module-level docstring completeness
+   - [ ] Check function/class docstrings with parameters, return types, and examples
+   - [ ] Update README and relevant documentation files
+
+3. **Performance Review**
+   - [ ] Run benchmarks against reference implementation
+   - [ ] Ensure memory usage is reasonable
+   - [ ] Verify scalability on larger graphs
+
+### Validation Criteria
+
+- Unit tests with ≥85% coverage for all modules
+- Integration tests with real document examples
+- Performance benchmarks matching the paper's reported metrics
+- Comprehensive documentation with usage examples and theoretical explanations
+
+## Previous Pre-Embedding Model Implementation Tasks
 
 This document outlines the critical tasks that must be completed before proceeding with embedding model implementation. Each section contains detailed action items, implementation steps, and validation criteria.
 
@@ -49,10 +192,19 @@ This document outlines the critical tasks that must be completed before proceedi
 - ✅ Integrate validation checkpoints into the ingestion pipeline
   - ✅ Added validation to document processing pipeline in src/docproc/core.py
   - ✅ Implemented schema validation in the document processing workflow
+- [ ] Extend JSON schema for embedding and ISNE modules
+  - [ ] Define embedding output schema with vector validation
+  - [ ] Create ISNE graph structure schemas
+  - [ ] Add relationship type definitions for ISNE
+  - [ ] Implement validation for embedding vectors and dimensions
+- [ ] Add validation checkpoints to the ISNE pipeline
+  - [ ] Validate input embeddings from ModernBERT
+  - [ ] Verify graph structure integrity
+  - [ ] Validate enhanced embeddings output
 
 ## 7. Type Safety Implementation
 
-### Primary Tasks
+### Type Safety Primary Tasks
 
 - [ ] Complete type safety implementation across the codebase following the roadmap
 - [ ] Fix all mypy errors in key modules
@@ -68,6 +220,10 @@ This document outlines the critical tasks that must be completed before proceedi
 6. ✅ Fix graph interfaces
 7. ✅ Fix Haystack engine module type safety issues
 8. [ ] Fix ISNE pipeline
+   - [ ] Add comprehensive type annotations to ISNE models
+   - [ ] Implement proper typing for graph structures
+   - [ ] Add type validation for vector operations
+   - [ ] Create typed interfaces for module interactions
 9. [ ] Fix integration points
 
 ### Type SafetyCurrent Status
@@ -179,6 +335,11 @@ This document outlines the critical tasks that must be completed before proceedi
 - [ ] Ensure source document linkage in all chunks
 - [ ] Add position tracking (offsets) to chunks
 - [ ] Include model information in metadata
+- [ ] Add ISNE-specific metadata fields
+  - [ ] Define graph relationship metadata schema
+  - [ ] Track ISNE model version and parameters
+  - [ ] Add metrics for embedding enhancement comparison
+  - [ ] Include provenance tracking for training data
 
 ### Implementation Steps for Metadata
 
@@ -240,6 +401,11 @@ This document outlines the critical tasks that must be completed before proceedi
 - [ ] Add performance monitoring hooks
 - [ ] Create pipeline stage tracking
 - [ ] Develop error aggregation system
+- [ ] Add ISNE-specific logging and monitoring
+  - [ ] Implement graph construction progress tracking
+  - [ ] Add metrics for embedding enhancement performance
+  - [ ] Create visualization for graph relationship structure
+  - [ ] Track memory usage during ISNE processing
 
 ### Implementation Steps for Logging
 
@@ -377,8 +543,33 @@ This document outlines the critical tasks that must be completed before proceedi
 1. Identify modules with insufficient coverage
 2. Create targeted unit tests for uncovered code
 3. Implement integration tests for module interactions
-4. Add performance regression tests
-5. Create edge case tests for error handling
+
+## 9. Future Enhancements and Optimizations
+
+### Document Processing Pipeline Generalization
+
+- [ ] Create generalized document processing framework across modules
+- [ ] Implement consistent data loading and output generation patterns
+- [ ] Standardize error handling and validation
+
+### Implementation Steps for Pipeline Generalization
+
+1. Create a common document processor base class in `src/utils/document_processor.py`
+2. Implement standardized input/output methods that preserve module-specific behavior
+3. Create a unified configuration system that supports module-specific options
+4. Refactor existing modules to use the common base while maintaining their specialized functionality
+5. Ensure special case handling for `src/docproc` which handles diverse input formats
+
+### Expected Benefits
+
+- Reduced code duplication across modules
+- Consistent error handling and validation
+- Simplified onboarding for new developers
+- Easier testing and maintenance
+
+1. Add performance regression tests
+
+2. Create edge case tests for error handling
 
 ### Validation Criteria for Test Coverage
 
@@ -431,15 +622,15 @@ Design and implement an asynchronous, double-buffered, multi-GPU engine that mov
 
 ### Implementation Steps
 
-1. __Config Layer__ – add YAML + loader with validation.
-2. __Types__ – create `PipelineBatch` and ensure mypy passes.
-3. __Stage Wrappers__ – thin adapters calling existing modules.
-4. __Orchestrator Skeleton__ – async queues with dummy `sleep` to prove overlap.
-5. __GPU Integration__ – add CUDA streams, NVLink copy, real model calls.
-6. __Metrics & CLI__ – expose metrics, wire into command-line.
-7. __Tests & Docs__ – ensure coverage, write architecture docs.
+1. **Config Layer** – add YAML + loader with validation.
+2. **Types** – create `PipelineBatch` and ensure mypy passes.
+3. **Stage Wrappers** – thin adapters calling existing modules.
+4. **Orchestrator Skeleton** – async queues with dummy `sleep` to prove overlap.
+5. **GPU Integration** – add CUDA streams, NVLink copy, real model calls.
+6. **Metrics & CLI** – expose metrics, wire into command-line.
+7. **Tests & Docs** – ensure coverage, write architecture docs.
 
-### Validation Criteria
+### Implementation Validation Criteria
 
 - Pipeline sustains \>90 % utilisation on both RTX A6000 GPUs
 - End-to-end latency per 128-doc batch \< 1.5× sum of slowest two stages
@@ -450,13 +641,13 @@ Design and implement an asynchronous, double-buffered, multi-GPU engine that mov
 
 ### Embedding System Implementation Status
 
-1. __Embedding Configuration System__
+1. **Embedding Configuration System**
    - [x] Implemented `embedding_config.py` and `embedding_config.yaml` for flexible model configuration
    - [x] Created adapter registration and factory system for easy switching between models
    - [x] Added configuration validation using Pydantic
    - [x] Implemented environment variable support for configuration overrides
 
-2. __Embedding Adapters Implementation__
+2. **Embedding Adapters Implementation**
    - [x] Created ModernBERT adapter for CPU inference
      - [x] Implemented direct HuggingFace transformers integration
      - [x] Added batching support for efficient processing
@@ -465,7 +656,7 @@ Design and implement an asynchronous, double-buffered, multi-GPU engine that mov
    - [x] Fixed type safety issues in embedding interfaces
    - [x] Added extensive logging for troubleshooting
 
-3. __PDF Pipeline Integration__
+3. **PDF Pipeline Integration**
    - [x] Updated PDF pipeline to use configurable embedding adapters
    - [x] Added validation testing for full pipeline with ModernBERT embedding
    - [x] Created test framework for comparing embedding approaches
@@ -473,18 +664,18 @@ Design and implement an asynchronous, double-buffered, multi-GPU engine that mov
 
 ### Remaining Embedding Implementation Tasks
 
-1. __Complete Unit Testing of Embedding Modules__
+1. **Complete Unit Testing of Embedding Modules**
    - [ ] Create dedicated unit tests for ModernBERT adapter
    - [ ] Add tests for embedding configuration system
    - [ ] Ensure ≥85% test coverage for all embedding modules
 
-2. __Finalize Model Engine Management__
+2. **Finalize Model Engine Management**
    - [ ] Complete remaining type fixes in Haystack model engine
    - [ ] Resolve unreachable statements in model engine code
    - [ ] Add proper runtime error handling and recovery
    - [ ] Create standardized model loading interface
 
-3. __Metadata Enhancement__
+3. **Metadata Enhancement**
    - [ ] Implement position tracking for text chunks
    - [ ] Add semantic coherence metrics
    - [ ] Standardize metadata format across document types

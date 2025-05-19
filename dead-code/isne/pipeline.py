@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Set, Type, Callable, cast
 from datetime import datetime
 import time
+import torch
+import numpy as np
 
 from src.isne.types.models import (
     IngestDocument, 
@@ -25,9 +27,11 @@ from src.isne.loaders.base_loader import BaseLoader, LoaderResult, LoaderConfig
 from src.isne.processors.base_processor import BaseProcessor, ProcessorResult, ProcessorConfig
 from src.isne.processors.embedding_processor import EmbeddingProcessor
 from src.isne.processors.graph_processor import GraphProcessor
+from src.isne.processors.isne_graph_processor import ISNEGraphProcessor
 from src.isne.processors.chunking_processor import ChunkingProcessor
 from src.isne.processors.chonking_processor import ChonkyProcessor
 from src.isne.models.isne_model import ISNEModel
+from src.isne.loaders.modernbert_loader import ModernBERTLoader
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -128,6 +132,8 @@ class PipelineConfig:
             use_gpu=use_gpu,
             cache_dir=os.path.join(self.cache_dir, "chunking")
         )
+        
+        self.chonky_model_id = chonky_model_id  # Add this attribute to fix the error
         
         self.chonky_config = chonky_config or ProcessorConfig(
             batch_size=batch_size,
@@ -259,6 +265,7 @@ class ISNEPipeline:
     
     This class orchestrates the entire ISNE pipeline process, from loading
     documents to creating ISNE embeddings and managing the graph structure.
+    Supports both general document processing and direct ModernBERT output processing.
     """
     
     def __init__(self, config: Optional[PipelineConfig] = None) -> None:
@@ -698,7 +705,222 @@ class ISNEPipeline:
         
         logger.info(f"Pipeline results saved to {output_dir}")
     
-    def save_model(self, path: Optional[Union[str, Path]] = None) -> Optional[str]:
+    def process_modernbert_output(self, 
+                               input_file: Union[str, Path],
+                               output_file: Optional[Union[str, Path]] = None,
+                               use_gpu: Optional[bool] = None) -> Dict[str, Any]:
+        """
+        Process ModernBERT output file using the ISNE pipeline.
+        
+        This method provides a direct way to process ModernBERT JSON outputs
+        through the ISNE pipeline without requiring the standard pipeline steps.
+        It uses the ModernBERTLoader to load data and ISNEGraphProcessor for 
+        enhanced graph processing specifically tailored for ISNE.
+        
+        Args:
+            input_file: Path to ModernBERT output JSON file
+            output_file: Optional path to save the processed output
+            use_gpu: Override config GPU setting for this processing run
+            
+        Returns:
+            Dictionary with processing results and statistics
+        """
+        start_time = time.time()
+        self.run_id = str(uuid.uuid4())
+        logger.info(f"ISNE Pipeline processing ModernBERT output: {input_file} (Run ID: {self.run_id})")
+        
+        # Override GPU setting if specified
+        if use_gpu is not None:
+            original_gpu_setting = self.config.use_gpu
+            self.config.use_gpu = use_gpu
+            logger.info(f"Overriding GPU setting: {use_gpu}")
+        
+        # Initialize stats for this run
+        self.run_stats = {
+            "run_id": self.run_id,
+            "start_time": datetime.now().isoformat(),
+            "documents_processed": 0,
+            "chunks_processed": 0,
+            "relations_created": 0,
+            "steps": {}
+        }
+        
+        try:
+            # Create ModernBERT loader
+            modernbert_loader = ModernBERTLoader()
+            
+            # Load data
+            logger.info(f"Loading ModernBERT output from {input_file}")
+            loader_start = time.time()
+            loader_result = modernbert_loader.load(input_file)
+            loader_time = time.time() - loader_start
+            
+            # Track statistics
+            self.documents = loader_result.documents
+            self.relations = loader_result.relations or []
+            self.dataset = loader_result.dataset
+            
+            self.run_stats["documents_processed"] = len(self.documents)
+            chunks_count = sum(len(doc.chunks) if doc.chunks else 0 for doc in self.documents)
+            self.run_stats["chunks_processed"] = chunks_count
+            self.run_stats["relations_created"] = len(self.relations)
+            self.run_stats["steps"]["loading"] = {
+                "time": loader_time,
+                "documents": len(self.documents),
+                "relations": len(self.relations)
+            }
+            
+            logger.info(f"Loaded {len(self.documents)} documents with {chunks_count} chunks and {len(self.relations)} relations in {loader_time:.2f}s")
+            
+            # Create ISNE Graph Processor (specialized for ISNE)
+            isne_graph_processor = ISNEGraphProcessor(
+                processor_config=self.config.graph_config,
+                min_edge_weight=0.1,
+                include_self_loops=True,
+                bidirectional_edges=True,
+                normalize_features=True,
+                edge_dropout=0.0,
+                use_attention_weights=True,
+                aggregation_type="mean"
+            )
+            
+            # Process through ISNE Graph Processor
+            logger.info("Processing with ISNE Graph Processor")
+            graph_start = time.time()
+            graph_result = isne_graph_processor.process(
+                self.documents,
+                self.relations,
+                self.dataset
+            )
+            graph_time = time.time() - graph_start
+            
+            # Update with processed data
+            self.documents = graph_result.documents
+            self.relations = graph_result.relations
+            self.dataset = graph_result.dataset
+            
+            # Track graph statistics
+            graph_stats = {
+                "time": graph_time,
+                "documents": len(self.documents),
+                "relations": len(self.relations),
+                "node_count": graph_result.metadata.get("node_count", 0),
+                "edge_count": graph_result.metadata.get("edge_count", 0),
+            }
+            self.run_stats["steps"]["graph_processing"] = graph_stats
+            
+            logger.info(f"Graph processing completed in {graph_time:.2f}s with {graph_stats['node_count']} nodes and {graph_stats['edge_count']} edges")
+            
+            # Use ISNE model to enhance embeddings if available and enabled
+            if self.config.enable_isne_model and self.isne_model is not None:
+                logger.info("Enhancing embeddings with ISNE model")
+                isne_start = time.time()
+                
+                # Extract graph data
+                node_features = torch.tensor(graph_result.metadata["node_features"], dtype=torch.float32)
+                edge_index = torch.tensor(graph_result.metadata["edge_index"], dtype=torch.int64) if graph_result.metadata["edge_index"] else None
+                edge_weights = torch.tensor(graph_result.metadata["edge_weights"], dtype=torch.float32) if graph_result.metadata["edge_weights"] else None
+                
+                # Process through ISNE model
+                device = "cuda" if self.config.use_gpu and torch.cuda.is_available() else "cpu"
+                self.isne_model.to(device)
+                node_features = node_features.to(device)
+                if edge_index is not None:
+                    edge_index = edge_index.to(device)
+                if edge_weights is not None:
+                    edge_weights = edge_weights.to(device)
+                
+                # Generate enhanced embeddings
+                self.isne_model.eval()
+                with torch.no_grad():
+                    enhanced_embeddings = self.isne_model(node_features, edge_index, edge_weights)
+                    enhanced_embeddings_np = enhanced_embeddings.cpu().numpy()
+                
+                # Update document embeddings with enhanced versions
+                for i, doc in enumerate(self.documents):
+                    if i < len(enhanced_embeddings_np):
+                        # Add metadata about ISNE processing
+                        updated_metadata = doc.metadata.copy() if doc.metadata else {}
+                        updated_metadata.update({
+                            "isne_processed": True,
+                            "isne_version": "1.0",
+                            "isne_processing_time": time.time() - isne_start
+                        })
+                        
+                        # Update document with enhanced embedding
+                        doc.embedding = enhanced_embeddings_np[i].tolist()
+                        doc.embedding_model = f"isne_enhanced_{doc.embedding_model or 'modern_bert'}"
+                        doc.metadata = updated_metadata
+                        doc.updated_at = datetime.now()
+                
+                isne_time = time.time() - isne_start
+                self.run_stats["steps"]["isne_model"] = {
+                    "time": isne_time,
+                    "documents_enhanced": len(enhanced_embeddings_np)
+                }
+                
+                logger.info(f"ISNE enhancement completed in {isne_time:.2f}s for {len(enhanced_embeddings_np)} documents")
+            
+            # Save results if output file specified
+            if output_file is not None:
+                self._save_modernbert_result(output_file)
+            
+            # Calculate total processing time
+            total_time = time.time() - start_time
+            self.run_stats["total_time"] = total_time
+            self.run_stats["end_time"] = datetime.now().isoformat()
+            
+            logger.info(f"ModernBERT output processing completed in {total_time:.2f}s")
+            return self.run_stats
+            
+        except Exception as e:
+            error_msg = f"Error processing ModernBERT output: {str(e)}"
+            logger.error(error_msg)
+            self.run_stats["error"] = error_msg
+            self.run_stats["end_time"] = datetime.now().isoformat()
+            return self.run_stats
+        finally:
+            # Restore original GPU setting if overridden
+            if use_gpu is not None:
+                self.config.use_gpu = original_gpu_setting
+    
+    def _save_modernbert_result(self, output_file: Union[str, Path]) -> None:
+        """
+        Save processed ModernBERT results to output file.
+        
+        Args:
+            output_file: Path to save the output file
+        """
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Convert dataset and documents to serializable format
+        if self.dataset:
+            output_data = {
+                "dataset": {
+                    "id": self.dataset.id,
+                    "name": self.dataset.name,
+                    "description": self.dataset.description,
+                    "metadata": self.dataset.metadata,
+                    "created_at": self.dataset.created_at.isoformat() if self.dataset.created_at else None,
+                    "updated_at": self.dataset.updated_at.isoformat() if self.dataset.updated_at else None,
+                },
+                "documents": [doc.to_dict() for doc in self.documents],
+                "relations": [rel.to_dict() for rel in self.relations],
+                "pipeline_info": {
+                    "run_id": self.run_id,
+                    "isne_version": "1.0",
+                    "processing_time": self.run_stats.get("total_time", 0.0),
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(output_data, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Saved processed output to {output_file}")
+    
+    def save_model(self, path: Optional[Union[str, Path]] = None) -> Optional[Path]:
         """
         Save trained ISNE model.
         
@@ -708,25 +930,23 @@ class ISNEPipeline:
         Returns:
             Path to saved model or None if no model
         """
-        if not self.isne_model:
+        if self.isne_model is None:
             logger.warning("No ISNE model to save")
             return None
-        
-        # Use default path if not specified
-        if path is None:
-            if not self.run_id:
-                self.run_id = str(uuid.uuid4())
             
-            path = os.path.join(self.config.output_dir, self.run_id, "isne_model.pt")
+        # Use default path if none provided
+        if path is None:
+            path = os.path.join(self.config.output_dir, f"{self.config.pipeline_name}_model.pt")
         
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        # Convert to Path object
+        model_path = Path(path)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Save model
-        self.isne_model.save(path)
-        logger.info(f"ISNE model saved to {path}")
+        self.isne_model.save(model_path)
+        logger.info(f"Saved ISNE model to {model_path}")
         
-        return str(path)
+        return model_path
     
     @classmethod
     def load_model(

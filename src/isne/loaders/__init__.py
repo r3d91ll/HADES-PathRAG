@@ -1,24 +1,14 @@
 """
-Document loaders module for the ISNE pipeline.
+Data loaders for the ISNE module.
 
-This module provides loaders for different types of document sources
-to be used in the ISNE pipeline.
+This package contains loaders for converting various data formats
+into structures suitable for the ISNE model.
 """
 
-from .base_loader import (
-    BaseLoader, 
-    LoaderResult,
-    LoaderConfig
-)
-from .text_directory_loader import TextDirectoryLoader
-from .json_loader import JSONLoader
-from .csv_loader import CSVLoader
+from .graph_dataset_loader import GraphDatasetLoader
+from .modernbert_loader import ModernBERTLoader
 
 __all__ = [
-    "BaseLoader",
-    "LoaderResult",
-    "LoaderConfig",
-    "TextDirectoryLoader",
-    "JSONLoader",
-    "CSVLoader"
+    'GraphDatasetLoader',
+    'ModernBERTLoader'
 ]

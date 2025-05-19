@@ -1,5 +1,7 @@
 [run]
-source = src/docproc
+source = 
+    src/docproc
+    src/isne
 omit = 
     */site-packages/*
     */dist-packages/*
