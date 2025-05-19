@@ -49,27 +49,32 @@ We've implemented and refined the text storage module to better support the HADE
 
 ### ISNE Implementation Plan Overview
 
-After a review of the initial implementation and the original research paper, we've decided to proceed with a complete rewrite of the ISNE module to more accurately reflect the authors' methodology. This plan outlines a comprehensive approach to implementing ISNE as documented in the [original paper](https://link.springer.com/article/10.1007/s40747-024-01545-6)
+After a review of the initial implementation and the original research paper, we've implemented the ISNE module to accurately reflect the authors' methodology. This implementation follows the comprehensive approach described in the [original paper](https://link.springer.com/article/10.1007/s40747-024-01545-6) and includes a dedicated training pipeline.
 
-### Core Components
+### Core ISNE Components
 
 - [x] Create isne_readme.md in the root of the module directory to track documentation
-- [ ] Set up PyTorch Geometric integration for efficient graph operations
-- [ ] Implement ISNE layer architecture precisely matching the paper's methodology
-- [ ] Create specialized loss functions for structure and feature preservation
-- [ ] Develop training framework with proper neighborhood sampling
-- [ ] Implement evaluation metrics for model validation
-- [ ] Build direct pipeline integration rather than file-based loading
+- [x] Set up PyTorch Geometric integration for efficient graph operations
+- [x] Implement ISNE layer architecture precisely matching the paper's methodology
+- [x] Create specialized loss functions for structure and feature preservation
+- [x] Develop training framework with proper neighborhood sampling
+- [x] Implement evaluation metrics for model validation
+- [x] Build direct pipeline integration rather than file-based loading
 
-### Pipeline Integration
+### Training Pipeline Implementation
 
-After examining the current pipeline architecture, we've determined that the ISNE module should integrate directly with the existing data flow rather than relying on file-based loading. Key points:
+- [x] Created dedicated ISNE training module
+  - [x] Implemented TextTrainingPipeline class with modular components
+  - [x] Added document processing, chunking, and embedding stages
+  - [x] Created graph construction from document chunks
+  - [x] Implemented model architecture and training procedures
+  - [x] Added checkpoint saving and early stopping
+  - [x] Provided comprehensive command-line interface
 
-- The existing pipeline (docproc → chunking → embedding) already maintains data in memory
-- File writes only occur in debug mode or when explicitly requested
-- ISNE should continue this pattern by accepting data directly from the embedding pipeline
-- The `modernbert_loader.py` will be maintained only for offline processing and troubleshooting
-- This approach eliminates unnecessary serialization/deserialization and improves performance
+- [x] Created documentation for training module
+  - [x] Added isne_training_readme.md with usage instructions
+  - [x] Documented command-line parameters
+  - [x] Added code examples for programmatic usage
 
 ### Module Structure
 
@@ -79,7 +84,7 @@ src/isne/
   ├── isne_readme.md
   ├── loaders/
   │   ├── __init__.py
-  │   ├── modernbert_loader.py  # Only for offline testing/debugging
+  │   ├── modernbert_loader.py  # For offline and training processing
   │   └── graph_dataset_loader.py
   ├── layers/
   │   ├── __init__.py
@@ -99,12 +104,26 @@ src/isne/
   │   └── trainer.py
   ├── evaluation/
   │   ├── __init__.py
+```
+
+### Pipeline Implementation
+
+We've implemented pipeline integration that supports both direct data flow and batch processing:
+
+- [x] The standard pipeline (docproc → chunking → embedding → ISNE) maintains data in memory
+- [x] Added specialized training pipeline for batch processing of document collections
+- [x] File writes occur for checkpoints and model persistence
+- [x] The `isne_training_text.py` module provides full training workflow
+- [x] Optimized for performance with proper CPU resource utilization
+
+```plaintext
   │   ├── metrics.py
   │   └── visualizers.py
   ├── utils/
   │   ├── __init__.py
   │   └── geometric_utils.py
   └── pipeline.py
+```
 ```
 
 ### Implementation Phases

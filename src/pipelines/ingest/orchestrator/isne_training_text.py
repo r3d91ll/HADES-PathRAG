@@ -226,8 +226,8 @@ class TextTrainingPipeline:
             pdf_path_str = str(pdf_path) if isinstance(pdf_path, Path) else pdf_path
             logger.info(f"Processing document: {pdf_path_str}")
             
-            # Process the document
-            doc_result = await process_document(pdf_path_str)
+            # Process the document - this is a synchronous function, not async
+            doc_result = process_document(pdf_path_str)
             
             # Generate a unique document ID if not already present
             if 'id' not in doc_result:
@@ -274,8 +274,8 @@ class TextTrainingPipeline:
             # Add chunks array
             pipeline_result['chunks'] = []
             
-            # Apply chunking
-            chunking_result = await chunk_text(content, **self.chunking_options)
+            # Apply chunking - this is a synchronous function, not async
+            chunking_result = chunk_text(content, **self.chunking_options)
             chunks = chunking_result.get('chunks', [])
             
             logger.info(f"Created {len(chunks)} chunks from document {doc_id}")
@@ -342,7 +342,7 @@ class TextTrainingPipeline:
             chunk_texts = [chunk['content'] for chunk in chunks]
             
             # Get embeddings from adapter
-            embeddings = await self.embedding_adapter.get_embeddings(chunk_texts)
+            embeddings = await self.embedding_adapter.embed(chunk_texts)
             
             # Add embeddings to chunks
             for idx, embedding in enumerate(embeddings):

@@ -8,8 +8,19 @@ Enhanced implementation of **PathRAG: Pruning Graph-based Retrieval Augmented Ge
 - 🧠 **vLLM Integration**: High-performance inference engine for local model serving
 - 📊 **ArangoDB Support**: Scalable graph database backend for enterprise use
 - 🔄 **ISNE Embedding**: Inductive Shallow Node Embedding for semantic understanding
+- 📝 **Text Processing**: Comprehensive document handling with customizable chunking
 - 🚀 **FastAPI Interface**: Simple, lightweight API for system interaction
 - 🔧 **Type-Safe Implementation**: Fully type-annotated codebase for reliability
+
+## Components
+
+- **Document Processing**: Advanced document parsing and normalization pipeline
+- **Chunking**: Smart document chunking respecting semantic boundaries
+- **Embedding**: High-dimensional vector embeddings using ModernBERT
+- **ISNE**: Graph structure-aware embedding enhancement
+- **Storage**: ArangoDB integration with graph and vector capabilities
+- **Retrieval**: Path-based semantic search with graph traversal
+- **Generation**: Context-aware response generation with LLMs
 
 ## Install
 
@@ -21,7 +32,10 @@ cd HADES-PathRAG
 # Install dependencies
 pip install -e .
 
-# Set up vLLM for local inference
+# Install PyTorch Geometric (required for ISNE)
+pip install torch-geometric
+
+# Set up vLLM for local inference (optional)
 pip install vllm
 
 # (Optional) Install ArangoDB if not already installed
@@ -30,9 +44,33 @@ pip install vllm
 
 ## Quick Start
 
-- You can quickly experience this project in the `v1_test.py` file.
-- Set OpenAI API key in environment if using OpenAI models: `api_key="sk-...".` in the `v1_test.py` and `llm.py` file
-- Prepare your retrieval document "text.txt".
+### Document Processing and ISNE Training
+
+```bash
+# Process and embed documents with ISNE enhancement
+python -m src.pipelines.ingest.orchestrator.isne_training_text \
+    --input_dir /path/to/pdf/directory \
+    --output_dir ./test-output/isne-training \
+    --model_dir ./models/isne
+```
+
+### Using the PathRAG System
+
+```bash
+# Query your knowledge graph
+python -m src.query.pathrag_query \
+    --question "Your question here" \
+    --document_collection documents \
+    --chunk_collection chunks
+```
+
+### API Server (Optional)
+
+```bash
+# Start the FastAPI server
+python -m src.api.server
+```
+
 - Use the following Python snippet in the "v1_text.py" file to initialize PathRAG and perform queries.
   
 ```python
