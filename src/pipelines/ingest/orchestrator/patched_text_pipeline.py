@@ -32,16 +32,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Explicitly import and register adapters to ensure they're available
-try:
-    from src.embedding.adapters.modernbert_adapter import ModernBERTEmbeddingAdapter
-    from src.embedding.base import register_adapter
-    # Re-register the adapter to ensure it's in the registry
-    register_adapter("modernbert", ModernBERTEmbeddingAdapter)
-    logger.info("Successfully registered ModernBERTEmbeddingAdapter")
-except Exception as e:
-    logger.error(f"Error registering ModernBERTEmbeddingAdapter: {e}")
-
 # Import document processing functions
 from src.docproc.core import process_document
 
@@ -69,6 +59,17 @@ except ImportError:
     logger.warning("ISNE module not available or incomplete - ISNE enhancement will be skipped")
     ISNE_AVAILABLE = False
 
+
+
+# Explicitly import and register adapters to ensure they're available
+try:
+    from src.embedding.adapters.modernbert_adapter import ModernBERTEmbeddingAdapter
+    from src.embedding.base import register_adapter
+    # Re-register the adapter to ensure it's in the registry
+    register_adapter("modernbert", ModernBERTEmbeddingAdapter)
+    logger.info("Successfully registered ModernBERTEmbeddingAdapter")
+except Exception as e:
+    logger.error(f"Error registering ModernBERTEmbeddingAdapter: {e}")
 
 class PDFPipeline:
     """Pipeline for processing documents through the HADES-PathRAG system.

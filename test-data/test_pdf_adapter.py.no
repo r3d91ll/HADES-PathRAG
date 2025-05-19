@@ -1,0 +1,223 @@
+"""
+Tests for PDF adapter.
+
+This module tests the PDFAdapter class functionality.
+"""
+
+import unittest
+import tempfile
+from pathlib import Path
+from typing import Dict, Any, Optional
+from unittest.mock import patch, MagicMock
+
+from src.docproc.adapters.pdf_adapter import PDFAdapter
+
+
+class TestPDFAdapter(unittest.TestCase):
+    """Test cases for PDFAdapter."""
+
+    def setUp(self):
+        """Set up the test environment."""
+        self.adapter = PDFAdapter()
+        
+        # Create a temporary directory for test files
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir_path = Path(self.temp_dir.name)
+        
+        # Since we can't easily create actual PDF files, create a text file with .pdf extension
+        # This is a simulation for testing purposes - real implementation should use actual PDFs
+        self.sample_pdf_content = """
+        This is a simulated PDF document content.
+        It contains multiple lines of text.
+        
+        Section 1: Introduction
+        This is the introduction section.
+        
+        Section 2: Content
+        This is the main content section.
+        It has multiple paragraphs.
+        
+        This is another paragraph.
+        
+        Section 3: Conclusion
+        This is the conclusion section.
+        """
+        
+        # Create test PDF file (actually a text file with .pdf extension)
+        self.test_pdf_path = self.temp_dir_path / "test.pdf"
+        with open(self.test_pdf_path, "w") as f:
+            f.write(self.sample_pdf_content)
+        
+        # Create an empty PDF file
+        self.empty_pdf_path = self.temp_dir_path / "empty.pdf"
+        with open(self.empty_pdf_path, "w") as f:
+            f.write("")
+    
+    def tearDown(self):
+        """Clean up after the test."""
+        self.temp_dir.cleanup()
+    
+    @patch('src.docproc.adapters.pdf_adapter.open')
+    @patch('src.docproc.adapters.pdf_adapter.PDFAdapter._extract_text_from_pdf')
+    def test_process_pdf_file(self, mock_extract_text, mock_open):
+        """Test processing a PDF file."""
+        # Mock the PDF extraction since we can't read actual PDFs
+        mock_extract_text.return_value = self.sample_pdf_content
+        mock_open.return_value.__enter__.return_value = MagicMock()
+        
+        result = self.adapter.process(self.test_pdf_path)
+        
+        # Check basic structure
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, dict)
+        self.assertIn('content', result)
+        self.assertIn('metadata', result)
+        
+        # Check metadata
+        self.assertEqual(result['metadata']['format'], 'pdf')
+        self.assertEqual(result['metadata']['file_path'], str(self.test_pdf_path))
+        
+        # Check content
+        self.assertIn('This is a simulated PDF document content', result['content'])
+    
+    @patch('src.docproc.adapters.pdf_adapter.PDFAdapter._extract_text_from_pdf')
+    def test_process_empty_pdf(self, mock_extract_text):
+        """Test processing an empty PDF file."""
+        # Mock the PDF extraction
+        mock_extract_text.return_value = ""
+        
+        result = self.adapter.process(self.empty_pdf_path)
+        
+        # Should handle empty files gracefully
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, dict)
+        self.assertIn('content', result)
+        self.assertIn('metadata', result)
+        
+        # Content should be empty
+        self.assertEqual(result['content'], "")
+    
+    @patch('src.docproc.adapters.pdf_adapter.PDFAdapter._extract_text_from_pdf')
+    def test_process_pdf_with_error(self, mock_extract_text):
+        """Test handling errors when processing a PDF file."""
+        # Mock extraction to raise an exception
+        mock_extract_text.side_effect = Exception("PDF processing error")
+        
+        # Should handle the error gracefully
+        result = self.adapter.process(self.test_pdf_path)
+        
+        # Should return error information in metadata
+        self.assertIsNotNone(result)
+        self.assertIn('metadata', result)
+        self.assertIn('error', result['metadata'])
+        self.assertIn('PDF processing error', result['metadata']['error'])
+    
+    @patch('src.docproc.adapters.pdf_adapter.PDFAdapter._extract_text_from_pdf')
+    def test_process_pdf_with_options(self, mock_extract_text):
+        """Test processing PDF with options."""
+        # Mock the PDF extraction
+        mock_extract_text.return_value = self.sample_pdf_content
+        
+        options = {
+            'extract_images': True,
+            'page_range': (1, 5),
+            'ocr_enabled': True
+        }
+        
+        result = self.adapter.process(self.test_pdf_path, options)
+        
+        # Check options were applied
+        self.assertIn('options', result['metadata'])
+        self.assertTrue(result['metadata']['options']['extract_images'])
+        self.assertEqual(result['metadata']['options']['page_range'], (1, 5))
+    
+    def test_process_text(self):
+        """Test processing PDF text directly."""
+        result = self.adapter.process_text(self.sample_pdf_content)
+        
+        # Basic structure checks
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, dict)
+        self.assertIn('content', result)
+        self.assertIn('metadata', result)
+        
+        # Check content
+        self.assertEqual(result['content'], self.sample_pdf_content)
+    
+    def test_extract_entities(self):
+        """Test entity extraction from PDF text."""
+        result = self.adapter.process_text(self.sample_pdf_content)
+        entities = self.adapter.extract_entities(result['content'])
+        
+        # Should return a list of entities
+        self.assertIsNotNone(entities)
+        self.assertIsInstance(entities, list)
+        
+        # Should extract sections as entities
+        self.assertTrue(len(entities) >= 3, "Should extract at least 3 sections as entities")
+        
+        section_titles = [entity.get('title') for entity in entities if 'title' in entity]
+        self.assertIn('Introduction', str(section_titles), "Should extract 'Introduction' section")
+        self.assertIn('Content', str(section_titles), "Should extract 'Content' section")
+        self.assertIn('Conclusion', str(section_titles), "Should extract 'Conclusion' section")
+    
+    def test_extract_metadata(self):
+        """Test metadata extraction from PDF text."""
+        result = self.adapter.process_text(self.sample_pdf_content)
+        metadata = self.adapter.extract_metadata(result['content'])
+        
+        # Should return metadata dict
+        self.assertIsNotNone(metadata)
+        self.assertIsInstance(metadata, dict)
+        
+        # Basic metadata
+        self.assertIn('format', metadata)
+        self.assertEqual(metadata['format'], 'pdf')
+        
+        # Should extract document structure metadata
+        self.assertIn('sections', metadata)
+        self.assertTrue(len(metadata['sections']) >= 3, "Should extract metadata for 3 sections")
+    
+    def test_convert_to_markdown(self):
+        """Test converting PDF text to markdown."""
+        result = self.adapter.process_text(self.sample_pdf_content)
+        markdown = self.adapter.convert_to_markdown(result['content'])
+        
+        # Should return markdown string
+        self.assertIsNotNone(markdown)
+        self.assertIsInstance(markdown, str)
+        
+        # Should contain structured markdown elements
+        self.assertIn('# Section 1: Introduction', markdown)
+        self.assertIn('# Section 2: Content', markdown)
+        self.assertIn('# Section 3: Conclusion', markdown)
+    
+    def test_convert_to_text(self):
+        """Test converting PDF content to plain text."""
+        result = self.adapter.process_text(self.sample_pdf_content)
+        text = self.adapter.convert_to_text(result['content'])
+        
+        # Should return plain text string
+        self.assertIsNotNone(text)
+        self.assertIsInstance(text, str)
+        
+        # Should preserve text content
+        self.assertIn('Section 1: Introduction', text)
+        self.assertIn('This is the introduction section', text)
+    
+    @patch('src.docproc.adapters.pdf_adapter.PDFAdapter._extract_text_from_pdf')
+    def test_pages_to_sections(self, mock_extract_text):
+        """Test converting PDF pages to document sections."""
+        # Mock extraction to return multiple pages
+        mock_extract_text.return_value = self.sample_pdf_content
+        
+        result = self.adapter.process(self.test_pdf_path, {'extract_sections': True})
+        
+        # Should extract sections
+        if 'sections' in result:
+            self.assertIsInstance(result['sections'], list)
+            self.assertTrue(len(result['sections']) > 0, "Should extract at least one section")
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,8 +1,53 @@
 # HADES-PathRAG: Implementation Tasks
 
-## Priority #1: ISNE (Inductive Shallow Node Embedding) Implementation
+## Text Storage Module Implementation
 
 ### Implementation Plan Overview
+
+We've implemented and refined the text storage module to better support the HADES-PathRAG architecture, focusing on improving the storage and retrieval of text documents, chunks, and embeddings through ArangoDB. This includes renaming PDF-specific components to handle text documents more generically.
+
+### Core Components
+
+- [x] Create text_storage_readme.md to track documentation for the module
+- [x] Rename PDF storage modules to text storage for greater flexibility
+  - [x] Rename pdf_storage.py to text_storage.py
+  - [x] Rename pdf_repository.py to text_repository.py
+  - [x] Update class names and references throughout the codebase
+- [x] Implement text document storage with proper typing
+  - [x] Add support for storing document metadata
+  - [x] Implement chunk storage with embedding support
+  - [x] Add relationship handling between documents and chunks
+- [x] Support for ISNE embeddings
+  - [x] Add embedding_type parameter for different embedding types
+  - [x] Implement vector search with embedding type selection
+  - [x] Support similarity edge creation based on embeddings
+- [x] Implement comprehensive search capabilities
+  - [x] Full-text search implementation
+  - [x] Vector similarity search
+  - [x] Hybrid search (text + vector)
+
+### Quality Assurance Achievements
+
+- [x] Code Review
+  - [x] Added unit tests with 85% code coverage for text_storage.py
+  - [x] Verified all functions have proper docstrings
+  - [x] Added type annotations throughout the module
+  - [x] Verified type safety in both service and repository layers
+- [x] Documentation Review
+  - [x] Created module-level docstrings explaining purpose and usage
+  - [x] Added function/class docstrings with parameters, return types
+  - [x] Updated text_storage_readme.md with usage examples
+
+### Remaining Tasks
+
+- [ ] Complete unit tests for text_repository.py to reach 85% coverage
+- [ ] Add performance benchmarks for vector search operations
+- [ ] Create integration tests to verify interaction with the ISNE pipeline
+- [ ] Implement better error handling and recovery mechanisms
+
+## Priority #1: ISNE Implementation
+
+### ISNE Implementation Plan Overview
 
 After a review of the initial implementation and the original research paper, we've decided to proceed with a complete rewrite of the ISNE module to more accurately reflect the authors' methodology. This plan outlines a comprehensive approach to implementing ISNE as documented in the [original paper](https://link.springer.com/article/10.1007/s40747-024-01545-6)
 
@@ -147,7 +192,7 @@ This document outlines the critical tasks that must be completed before proceedi
 
 ## 1. JSON Object Schema Standardization
 
-### JSONPrimary Tasks
+### JSON Object Schema Standardization
 
 - [x] Define comprehensive JSON schema using Pydantic
 - [x] Implement validation checkpoints throughout the pipeline
@@ -233,7 +278,7 @@ This document outlines the critical tasks that must be completed before proceedi
 - Added proper type annotations for all functions in the module
 - Improved error handling to maintain consistent state
 
-### Type SafetyCompleted Tasks
+### Type Safety Completed Tasks
 
 - ✅ Fix type safety issues in src/model_engine/engines/haystack/__init__.py
   - ✅ Added proper type annotations for all methods
