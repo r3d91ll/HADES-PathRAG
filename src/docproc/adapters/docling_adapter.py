@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import importlib.util
+import json
 import logging
 import re
 import tempfile
@@ -23,6 +25,7 @@ from .base import BaseAdapter
 from .registry import register_adapter
 from src.docproc.utils.metadata_extractor import extract_metadata
 from ..utils.markdown_entity_extractor import extract_markdown_entities, extract_markdown_metadata
+from ...utils.device_utils import get_device_info, is_gpu_available
 
 __all__ = ["DoclingAdapter"]
 
@@ -30,6 +33,28 @@ __all__ = ["DoclingAdapter"]
 # ---------------------------------------------------------------------------
 # Import Docling - we now require it to be installed
 # ---------------------------------------------------------------------------
+# Note: We no longer need complex monkey patching since we're setting
+# environment variables at the DocumentProcessorManager level
+import os
+import torch
+
+# For informational purposes, we'll log what device settings we find
+device_env = os.environ.get('DOCLING_DEVICE', 'not set')
+use_gpu_env = os.environ.get('DOCLING_USE_GPU', 'not set')
+cuda_devices_env = os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')
+pytorch_cpu_env = os.environ.get('PYTORCH_FORCE_CPU', 'not set')
+
+logger.info(f"DoclingAdapter loaded with environment settings:")
+logger.info(f"  DOCLING_DEVICE: {device_env}")
+logger.info(f"  DOCLING_USE_GPU: {use_gpu_env}")
+logger.info(f"  CUDA_VISIBLE_DEVICES: {cuda_devices_env}")
+logger.info(f"  PYTORCH_FORCE_CPU: {pytorch_cpu_env}")
+logger.info(f"  CUDA available according to PyTorch: {torch.cuda.is_available()}")
+
+# Now we can simply import Docling - the environment variables will ensure
+# it uses the correct device settings without requiring complex patching
+
+# Now import DocumentConverter
 from docling.document_converter import DocumentConverter
 
 # Set flag for tests
@@ -91,9 +116,60 @@ class DoclingAdapter(BaseAdapter):
                 'min_confidence': self.entity_config.get('min_confidence', 0.7),
             })
         
+        # Check device configuration from environment and system
+        device_info = get_device_info()
+        gpu_available = device_info['gpu_available']
+        
+        # Log the environment variables and device information for debugging
+        logger.info("DoclingAdapter loaded with environment settings:")
+        logger.info(f"  CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')}")
+        logger.info(f"  GPU available: {gpu_available}")
+        
+        # If GPU is available, we need to determine which GPU to use based on the configuration
+        device = None
+        use_gpu = None
+        
+        if gpu_available:
+            # If CUDA_VISIBLE_DEVICES is set to a single device index, use that device
+            cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+            
+            # Check if we are targeting a specific GPU device
+            if cuda_visible and ',' not in cuda_visible and cuda_visible.isdigit():
+                # We're targeting a specific GPU, set device explicitly
+                device = f"cuda:{0}"  # Always use index 0 within the visible devices
+                logger.info(f"Setting device=cuda:0 (which maps to physical GPU {cuda_visible})")
+                use_gpu = True
+            elif gpu_available:
+                # Multiple GPUs or default selection, let Docling choose based on env vars
+                device = "cuda:0"
+                use_gpu = True
+                logger.info(f"Using default device selection: {device}")
+        
+        # Get device name based on our selection
+        if device and device.startswith('cuda:') and torch.cuda.is_available():
+            device_idx = int(device.split(':')[1])
+            device_name = torch.cuda.get_device_name(device_idx)
+            logger.info(f"  Device: {device} ({device_name})")
+        else:
+            logger.info(f"  Device: cpu")
+        
+        # Log initialization information
+        logger.info(f"DoclingAdapter initialized with device={device}, gpu_available={gpu_available}")
+        
         # Initialize the DocumentConverter - this will fail if Docling is not available
         # which is the desired behavior
-        self.converter = DocumentConverter()
+        converter_kwargs = {}
+        # Pass device directly if supported by DocumentConverter
+        if device is not None:
+            converter_kwargs['device'] = device
+        
+        try:
+            # Try to initialize with device parameter
+            self.converter = DocumentConverter(**converter_kwargs)
+        except TypeError:
+            # If DocumentConverter doesn't accept device parameter, fall back to environment variables
+            logger.warning("DocumentConverter doesn't accept device parameter, using environment variables instead")
+            self.converter = DocumentConverter()
 
     # ------------------------------------------------------------------
     # Public API – file based processing

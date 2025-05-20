@@ -32,12 +32,16 @@ Usage examples:
 """
 
 import logging
-from pathlib import Path
+import os
+import sys
+import importlib
 from typing import Dict, Any, Optional, Union, List, cast
+from pathlib import Path
 
 from src.docproc.adapters.base import BaseAdapter
 from .core import process_document, process_text, get_format_for_document
 from .adapters.registry import get_adapter_for_format
+from ..utils.device_utils import is_gpu_available
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +87,75 @@ class DocumentProcessorManager:
         ])
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize the document processor manager.
-        
+    def __init__(self, options: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize the DocumentProcessorManager.
+
         Args:
-            config: Optional configuration dictionary
+            options (Dict[str, Any], optional): Options for processing. Defaults to None.
         """
-        self.config = config or {}
+        self.options = options or {}
+        
+        # Check both environment variable and pipeline configuration for CUDA_VISIBLE_DEVICES
+        # First check if it's already set in the environment (uppercase version takes precedence)
+        cuda_devices = os.environ.get('CUDA_VISIBLE_DEVICES')
+        
+        # If not set in environment, check if it's in the pipeline config
+        if cuda_devices is None and 'pipeline' in self.options and 'device_config' in self.options['pipeline']:
+            device_config = self.options['pipeline']['device_config']
+            if 'cuda_visible_devices' in device_config:
+                cuda_devices = device_config['cuda_visible_devices']
+                
+        # Apply the setting if we found a value
+        if cuda_devices is not None:  # None means use system default
+            # Ensure it's set in the proper uppercase format
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(cuda_devices)
+            if cuda_devices == "":
+                logger.info("Setting CUDA_VISIBLE_DEVICES to empty string - forcing CPU mode")
+            else:
+                logger.info(f"Setting CUDA_VISIBLE_DEVICES to '{cuda_devices}'")
+                
+        # Log the final CUDA_VISIBLE_DEVICES setting
+        logger.info(f"Final CUDA_VISIBLE_DEVICES setting: '{os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')}'")
+        
+        # Check if CUDA is available after applying settings
+        gpu_available = is_gpu_available()
+        
+        # Log device configuration
+        if not gpu_available:
+            logger.info(f"Using CPU configuration with {os.cpu_count()} threads")
+        else:
+            # If GPU is available, get details and log them
+            import torch
+            gpu_count = torch.cuda.device_count()
+            gpu_names = [torch.cuda.get_device_name(i) for i in range(gpu_count)]
+            logger.info(f"Using GPU configuration: {gpu_count} devices available: {gpu_names}")
+            
+            # If we have specific GPU device configurations in the options, use them
+            gpu_device = None
+            
+            # Check for explicit device setting in GPU execution config
+            if 'gpu_execution' in self.options and self.options['gpu_execution'].get('enabled', False):
+                # Get docproc device setting if available
+                if 'docproc' in self.options['gpu_execution'] and 'device' in self.options['gpu_execution']['docproc']:
+                    gpu_device = self.options['gpu_execution']['docproc']['device']
+                    logger.info(f"Using GPU device from config: {gpu_device}")
+                    
+            # Set PyTorch device index if specified
+            if gpu_device and gpu_device.startswith('cuda:') and gpu_count > 0:
+                try:
+                    # Extract index from cuda:N format
+                    device_idx = gpu_device.split(':')[1]
+                    os.environ['PYTORCH_CUDA_DEVICE'] = device_idx
+                    logger.info(f"Setting PYTORCH_CUDA_DEVICE to {device_idx}")
+                except (IndexError, ValueError):
+                    # Default to first GPU if parsing fails
+                    os.environ['PYTORCH_CUDA_DEVICE'] = '0'
+                    logger.info("Defaulting PYTORCH_CUDA_DEVICE to 0")
+            elif gpu_count > 0:
+                # Default to first available GPU
+                os.environ['PYTORCH_CUDA_DEVICE'] = '0'
+                logger.info("Defaulting PYTORCH_CUDA_DEVICE to 0")
+            
         self.cache: Dict[str, BaseAdapter] = {}  # Simple cache for frequently used adapters
         logger.info("Document processor manager initialized")
     
@@ -159,9 +225,9 @@ class DocumentProcessorManager:
         """
         options = options or {}
         
-        # If options are provided in the config, merge them
-        if 'processing_options' in self.config:
-            merged_options = {**self.config['processing_options'], **options}
+        # If we have global options from initialization, merge them
+        if self.options and 'processing_options' in self.options:
+            merged_options = {**self.options['processing_options'], **options}
             options = merged_options
         
         # Case 1: Process text content with specified type

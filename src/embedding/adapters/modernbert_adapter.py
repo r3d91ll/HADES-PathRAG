@@ -73,6 +73,9 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         self.normalize_embeddings: bool = normalize_embeddings if normalize_embeddings is not None else config.get("normalize_embeddings", True)
         self.device: str = device or config.get("device", "cpu")
         
+        # Adjust for CUDA_VISIBLE_DEVICES remapping
+        self.adjusted_device = self._get_adjusted_device(self.device)
+        
         # Engine configuration
         self.use_model_engine: bool = config.get("use_model_engine", True)
         self.engine_type: str = config.get("engine_type", "haystack")
@@ -89,9 +92,51 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         # Log initialization
         logger.info(
             f"Initialized ModernBERT adapter with model={self.model_name}, "
-            f"device={self.device}, pooling={self.pooling_strategy}"
+            f"device={self.adjusted_device}, pooling={self.pooling_strategy}"
         )
         
+    def _get_adjusted_device(self, device: str) -> str:
+        """Adjust requested device based on CUDA_VISIBLE_DEVICES setting.
+        
+        When CUDA_VISIBLE_DEVICES is set, it remaps available devices. For example,
+        with CUDA_VISIBLE_DEVICES=1, the physical GPU 1 is available as cuda:0.
+        This function handles this remapping.
+        
+        Args:
+            device: The requested device (e.g., 'cuda:1')
+            
+        Returns:
+            Adjusted device string for current environment
+        """
+        if not device.startswith('cuda:'):
+            return device
+            
+        try:
+            # Check how many GPUs are actually visible to PyTorch
+            import torch
+            visible_count = torch.cuda.device_count()
+            
+            # Extract device index from cuda:N format
+            device_idx = int(device.split(':')[1])
+            
+            # If requested index is higher than available count, use highest available
+            if device_idx >= visible_count and visible_count > 0:
+                logger.warning(f"Requested device {device} is not available with CUDA_VISIBLE_DEVICES setting. "
+                              f"Only {visible_count} devices visible. Using cuda:{visible_count-1} instead.")
+                return f"cuda:{visible_count-1}"
+                
+            # If no GPUs available but CUDA requested, warn and use CPU
+            if visible_count == 0 and device.startswith('cuda'):
+                logger.warning(f"No CUDA devices available. Falling back to CPU.")
+                return "cpu"
+                
+            # For valid configurations, return the requested device
+            return device
+            
+        except Exception as e:
+            logger.warning(f"Error adjusting CUDA device mapping: {e}. Using requested device: {device}")
+            return device
+    
     @property
     def engine(self) -> HaystackModelEngine:
         """Lazy-load the Haystack engine when first needed."""
@@ -138,28 +183,39 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         try:
             # For CPU-based inference, we'll load the model directly rather than using Haystack
             import torch
-            from transformers import AutoModel, AutoTokenizer
             
-            logger.info(f"Loading ModernBERT model directly: {self.model_name} on {self.device}")
+            # Use the adjusted device that accounts for CUDA_VISIBLE_DEVICES settings
+            effective_device = self.adjusted_device
             
-            # Load the tokenizer - this will automatically download if needed
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
-            logger.info(f"ModernBERT tokenizer loaded successfully")
+            # Log the actual device being used
+            logger.info(f"Loading ModernBERT model directly: {self.model_name} on {effective_device}")
             
-            # Load the model directly on CPU or specified device
-            # We don't convert to half precision on CPU as it's not supported
-            model_device = torch.device(self.device)
-            self._model = AutoModel.from_pretrained(self.model_name, trust_remote_code=True)
-            
-            # Only convert to half precision if on CUDA device
-            if 'cuda' in self.device:
-                self._model = self._model.half()
-            
-            self._model = self._model.to(model_device)
-            self._model.eval()  # Set model to evaluation mode
-            
-            logger.info(f"ModernBERT model loaded successfully on {self.device}")
+            # Load tokenizer first
+            if not hasattr(self, '_tokenizer') or self._tokenizer is None:
+                self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                logger.info("ModernBERT tokenizer loaded successfully")
+
+            # Load model if not already loaded
+            if not hasattr(self, '_model') or self._model is None:
+                self._model = AutoModel.from_pretrained(self.model_name)
+
+            # Check if the device is actually available before moving the model
+            if effective_device.startswith('cuda:'):
+                device_idx = int(effective_device.split(':')[1])
+                available_count = torch.cuda.device_count()
+                
+                if device_idx >= available_count:
+                    logger.warning(f"Device {effective_device} not available, falling back to CPU. "
+                                  f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')}")
+                    effective_device = 'cpu'
+
+            # Move to device
+            self._model = self._model.to(effective_device)
+
+            # Set model to evaluation mode
+            self._model.eval()
             self._model_loaded = True
+            logger.info(f"ModernBERT model loaded successfully on {effective_device}")
         except Exception as e:
             logger.error(f"Failed to load ModernBERT model: {e}")
             raise RuntimeError(f"Failed to load ModernBERT model: {e}") from e
