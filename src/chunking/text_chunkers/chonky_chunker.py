@@ -184,6 +184,22 @@ def get_model_engine() -> Optional[HaystackModelEngine]:
         # Get chunker configuration
         config = get_chunker_config('chonky')
         
+        # Check for device configuration in pipeline settings
+        try:
+            # Import here to avoid circular imports
+            from src.config.config_loader import get_component_device
+            
+            # Get device for chunking component
+            device = get_component_device('chunking')
+            if device:
+                logger.info(f"Using configured device for chunking: {device}")
+                # We'll use this device when loading models with the engine
+            else:
+                logger.info("No specific device configured for chunking, using default")
+        except Exception as e:
+            logger.warning(f"Could not get component device settings: {e}")
+            # Continue with default device settings
+        
         # Check if auto-start is enabled
         auto_start = config.get('auto_start_engine', True)
         if not auto_start:
@@ -312,6 +328,22 @@ def _get_splitter_with_engine(model_id: str, device: str = "cuda") -> ParagraphS
     Raises:
         RuntimeError: If the model fails to load
     """
+    # Check for device configuration in pipeline settings
+    try:
+        # Import here to avoid circular imports
+        from src.config.config_loader import load_pipeline_config
+        
+        # Try to load pipeline configuration to get device settings
+        pipeline_config = load_pipeline_config()
+        if pipeline_config and 'gpu_execution' in pipeline_config and pipeline_config['gpu_execution'].get('enabled', False):
+            if 'chunking' in pipeline_config['gpu_execution'] and 'device' in pipeline_config['gpu_execution']['chunking']:
+                configured_device = pipeline_config['gpu_execution']['chunking']['device']
+                if configured_device:
+                    logger.info(f"Using configured device from pipeline config: {configured_device}")
+                    device = configured_device
+    except Exception as e:
+        logger.warning(f"Could not load pipeline config for device settings: {e}")
+        # Continue with provided or default device
     global _SPLITTER_CACHE
     
     # Check if we have a cached splitter for this model
@@ -408,8 +440,9 @@ def chunk_text(
     doc_type: str = "text",
     max_tokens: int = 2048,
     output_format: str = "document",
-    model_id: str = "mirth/chonky_modernbert_large_1"  # Add default model_id
-) -> Union[Dict[str, Any], DocumentSchemaType]:
+    model_id: str = "mirth/chonky_modernbert_large_1",  
+    device: Optional[str] = None
+) -> Union[Dict[str, Any], BaseDocument, DocumentSchema]:
     """Chunk a text document into semantically coherent paragraphs.
     
     Args:
@@ -469,8 +502,26 @@ def chunk_text(
     config = get_chunker_config('chonky')
     logger.info(f"Loaded chunker config: {config}")
     
-    # Use the configured device or default to CUDA
-    device = config.get('device', 'cuda')
+    # Check if a device was explicitly passed to the function
+    if device is None:
+        # Try to get device from pipeline config
+        try:
+            from src.config.config_loader import get_component_device
+            configured_device = get_component_device('chunking')
+            if configured_device:
+                device = configured_device
+                logger.info(f"Using device from pipeline config: {device}")
+            else:
+                # Fall back to chunker config
+                device = config.get('device', 'cuda')
+                logger.info(f"Using device from chunker config: {device}")
+        except Exception as e:
+            # If we can't get the pipeline config, fall back to the chunker config
+            device = config.get('device', 'cuda')
+            logger.warning(f"Error getting pipeline config device, using default: {device}. Error: {e}")
+    else:
+        logger.info(f"Using explicitly provided device: {device}")
+        
     logger.info(f"Using device: {device}")
     
     # Get the configured max tokens or use the provided value

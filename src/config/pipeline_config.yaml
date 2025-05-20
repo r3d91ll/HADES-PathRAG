@@ -8,20 +8,20 @@ pipeline:
   save_intermediate_results: true
   output_dir: "./test-output"
   device_config:
-    CUDA_VISIBLE_DEVICES: "1"  # Empty string to force CPU, comma-separated device IDs for GPU (e.g., "0,1"), or null for system default
+    CUDA_VISIBLE_DEVICES: "0,1"  # Empty string to force CPU, comma-separated device IDs for GPU (e.g., "0,1"), or null for system default
 
 # Device execution configurations
 # Either gpu_execution or cpu_execution should have enabled: true, but not both
 gpu_execution:
   enabled: true  # Master toggle for GPU mode
   docproc:
-    device: "cuda:1"
-    batch_size: 8
+    device: "cuda:0"
+    batch_size: 4
   chunking:
-    device: "cuda:1"
+    device: "cuda:0"
     batch_size: 8
   embedding:
-    device: "cuda:1"
+    device: "cuda:0"
     batch_size: 8
     model_precision: "float16"  # Options: float32, float16, bfloat16
 

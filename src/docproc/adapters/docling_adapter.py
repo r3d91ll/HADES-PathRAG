@@ -129,21 +129,34 @@ class DoclingAdapter(BaseAdapter):
         device = None
         use_gpu = None
         
+        # Check if specific GPU device is configured in the options
+        gpu_device = None
+        if 'gpu_execution' in self.options and self.options['gpu_execution'].get('enabled', True):
+            if 'docproc' in self.options['gpu_execution'] and 'device' in self.options['gpu_execution']['docproc']:
+                gpu_device = self.options['gpu_execution']['docproc']['device']
+                logger.info(f"Found GPU device in config: {gpu_device}")
+        
         if gpu_available:
-            # If CUDA_VISIBLE_DEVICES is set to a single device index, use that device
-            cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '')
-            
-            # Check if we are targeting a specific GPU device
-            if cuda_visible and ',' not in cuda_visible and cuda_visible.isdigit():
-                # We're targeting a specific GPU, set device explicitly
-                device = f"cuda:{0}"  # Always use index 0 within the visible devices
-                logger.info(f"Setting device=cuda:0 (which maps to physical GPU {cuda_visible})")
+            if gpu_device and gpu_device.startswith('cuda:'):
+                # Use the specific device from the configuration
+                device = gpu_device
+                logger.info(f"Using configured device: {device}")
                 use_gpu = True
-            elif gpu_available:
-                # Multiple GPUs or default selection, let Docling choose based on env vars
-                device = "cuda:0"
-                use_gpu = True
-                logger.info(f"Using default device selection: {device}")
+            else:
+                # If CUDA_VISIBLE_DEVICES is set to a single device index, use that device
+                cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+                
+                # Check if we are targeting a specific GPU device
+                if cuda_visible and ',' not in cuda_visible and cuda_visible.isdigit():
+                    # We're targeting a specific GPU, set device explicitly
+                    device = f"cuda:{0}"  # Always use index 0 within the visible devices
+                    logger.info(f"Setting device=cuda:0 (which maps to physical GPU {cuda_visible})")
+                    use_gpu = True
+                elif gpu_available:
+                    # Multiple GPUs or default selection, let Docling choose based on env vars
+                    device = "cuda:0"
+                    use_gpu = True
+                    logger.info(f"Using default device selection: {device}")
         
         # Get device name based on our selection
         if device and device.startswith('cuda:') and torch.cuda.is_available():

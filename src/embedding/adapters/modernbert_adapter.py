@@ -71,7 +71,19 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         self.pooling_strategy: PoolingStrategy = pooling_strategy or config.get("pooling_strategy", "cls")
         self.batch_size: int = batch_size or config.get("batch_size", 8)
         self.normalize_embeddings: bool = normalize_embeddings if normalize_embeddings is not None else config.get("normalize_embeddings", True)
-        self.device: str = device or config.get("device", "cpu")
+        
+        # Check for device setting in the pipeline configuration
+        pipeline_device = self._get_pipeline_device('embedding')
+        # Allow explicit parameter to override, then pipeline config, then adapter config
+        self.device: str = device or pipeline_device or config.get("device", "cpu")
+        
+        # Log the device selection
+        if pipeline_device:
+            logger.info(f"Using device from pipeline config: {pipeline_device}")
+        elif device:
+            logger.info(f"Using explicitly provided device: {device}")
+        else:
+            logger.info(f"Using device from adapter config: {self.device}")
         
         # Adjust for CUDA_VISIBLE_DEVICES remapping
         self.adjusted_device = self._get_adjusted_device(self.device)
@@ -95,6 +107,25 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
             f"device={self.adjusted_device}, pooling={self.pooling_strategy}"
         )
         
+    def _get_pipeline_device(self, component_name: str) -> Optional[str]:
+        """Get the device configuration for a specific component from the pipeline config.
+        
+        Args:
+            component_name: Name of the component (e.g., 'embedding', 'chunking', 'docproc')
+            
+        Returns:
+            The configured device string or None if not configured/available
+        """
+        try:
+            # Import here to avoid circular imports
+            from src.config.config_loader import get_component_device
+            
+            # Get device for the specified component
+            return get_component_device(component_name)
+        except Exception as e:
+            logger.warning(f"Could not get component device from pipeline config: {e}")
+            return None
+    
     def _get_adjusted_device(self, device: str) -> str:
         """Adjust requested device based on CUDA_VISIBLE_DEVICES setting.
         
