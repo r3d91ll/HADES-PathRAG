@@ -2,7 +2,7 @@
 
 ## Overview
 
-The document processing module provides a unified interface for processing various document formats including PDF, HTML, code files, and structured data formats (JSON, XML, YAML). It converts them to standardized formats for both RAG pipeline ingestion and direct model inference.
+The document processing module provides a unified interface for processing a wide range of document formats. It converts them to standardized formats for both RAG pipeline ingestion and direct model inference, supporting comprehensive document processing needs.
 
 ## Key Components
 
@@ -31,7 +31,9 @@ The manager provides a high-level interface with a caching layer:
 Adapter implementations for specific document formats:
 
 - `BaseAdapter` - Abstract base class for all format adapters
-- `DoclingAdapter` - Processes PDF and other document formats via Docling
+- `DoclingAdapter` - Processes multiple document formats via Docling, including:
+  - Document formats: PDF, Markdown, Text, Word (DOCX/DOC), PowerPoint (PPTX/PPT), Excel (XLSX/XLS), HTML, XML, EPUB, RTF, ODT, CSV, JSON, YAML
+  - Code formats: Python, JavaScript, TypeScript, Java, C++, C, Go, Ruby, PHP, C#, Rust, Swift, Kotlin, Scala, R, Shell scripts, Jupyter notebooks
 - `MarkdownAdapter` - Specialized handling for Markdown files
 - `PythonAdapter` - Code-aware processing for Python files
 
@@ -131,9 +133,47 @@ The module has a comprehensive test suite with over 85% coverage for key compone
 - Tests for processing functions and adapters
 - Validation tests for document schemas
 
+## Supported File Types
+
+The document processing module now supports a comprehensive range of file types through the DoclingAdapter:
+
+### Document Formats
+
+- PDF (`.pdf`) - Full document processing with OCR support
+- Microsoft Word (`.docx`, `.doc`)
+- Microsoft PowerPoint (`.pptx`, `.ppt`)
+- Microsoft Excel (`.xlsx`, `.xls`, `.csv`)
+- Text (`.txt`)
+- Markdown (`.md`, `.markdown`)
+- HTML (`.html`, `.htm`)
+- XML (`.xml`)
+- E-books (`.epub`)
+- OpenDocument (`.odt`, `.rtf`)
+- Structured data (`.json`, `.yaml`, `.yml`)
+
+### Code Formats
+
+- Python (`.py`)
+- JavaScript (`.js`)
+- TypeScript (`.ts`)
+- Java (`.java`)
+- C++ (`.cpp`)
+- C (`.c`)
+- Go (`.go`)
+- Ruby (`.rb`)
+- PHP (`.php`)
+- C# (`.cs`)
+- Rust (`.rs`)
+- Swift (`.swift`)
+- Kotlin (`.kt`)
+- Scala (`.scala`)
+- R (`.r`)
+- Shell scripts (`.sh`)
+- Jupyter notebooks (`.ipynb`)
+
 ## Future Improvements
 
-- Add support for additional document formats (EPUB, DOC/DOCX)
 - Enhance entity extraction with NER models
 - Add parallel processing for large document batches
 - Implement content summarization pre-processor
+- Add more specialized format-specific features

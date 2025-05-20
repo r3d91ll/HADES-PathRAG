@@ -124,3 +124,4 @@ test-output/markdown_output/
 test-data/*.pdf
 test-output/*
 .coveragerc
+test-data2/*

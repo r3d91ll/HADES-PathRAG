@@ -1,9 +1,18 @@
 """
-Unified Docling adapter for document processing.
+Unified Docling adapter for comprehensive document processing.
 
-This adapter leverages Docling's `DocumentConverter` to handle PDF and markdown formats.
-The goal is to expose a single adapter that produces a normalised output
-structure identical to all other adapters in `src.docproc.adapters`.
+This adapter leverages Docling's `DocumentConverter` to handle a wide variety of document formats including:
+- Document formats: PDF, Markdown, Text, Word (DOCX/DOC), PowerPoint (PPTX/PPT), Excel (XLSX/XLS), 
+  HTML, XML, EPUB, RTF, ODT, CSV, JSON, YAML
+- Code formats: Python, JavaScript, TypeScript, Java, C++, C, Go, Ruby, PHP, C#, Rust, Swift, 
+  Kotlin, Scala, R, Shell scripts, Jupyter notebooks
+
+The goal is to expose a single adapter that produces a normalized output structure 
+identical to all other adapters in `src.docproc.adapters`, while supporting the broadest possible 
+range of input formats.
+
+Binary formats (like PDF, DOCX) are processed directly by Docling, while text-based formats can 
+also be processed by fallback methods if Docling processing fails.
 """
 
 from __future__ import annotations
@@ -68,18 +77,57 @@ __all__ = ["DoclingAdapter"]
 # Helper constants
 # ---------------------------------------------------------------------------
 
-# Simple extension to format lookup table - only supporting PDF, markdown, and Python
+# Extension to format lookup table for all formats Docling supports
 EXTENSION_TO_FORMAT: Dict[str, str] = {
-    # Documents
+    # Document formats
     ".pdf": "pdf",
     ".md": "markdown",
     ".markdown": "markdown",
     ".txt": "text",
-    # Python code files
+    ".docx": "docx",
+    ".doc": "doc",
+    ".rtf": "rtf",
+    ".odt": "odt",
+    ".html": "html",
+    ".htm": "html",
+    ".xml": "xml",
+    ".epub": "epub",
+    ".pptx": "pptx",
+    ".ppt": "ppt",
+    ".xls": "xls",
+    ".xlsx": "xlsx",
+    ".csv": "csv",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    # Code file formats
     ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".java": "java",
+    ".cpp": "cpp",
+    ".c": "c",
+    ".go": "go",
+    ".rb": "ruby",
+    ".php": "php",
+    ".cs": "csharp",
+    ".rs": "rust",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".r": "r",
+    ".sh": "shell",
+    ".ipynb": "jupyter"
 }
 
-OCR_FORMATS = {"pdf"}
+# Formats that may require OCR processing
+OCR_FORMATS = {"pdf", "doc", "docx", "ppt", "pptx"}
+
+# Binary formats that cannot be read as text directly
+BINARY_FORMATS = {
+    "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", 
+    "epub", "odt", "rtf", "ipynb"
+}
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +136,18 @@ OCR_FORMATS = {"pdf"}
 
 
 class DoclingAdapter(BaseAdapter):
-    """Adapter that routes *any* supported file through Docling."""
+    """Adapter that routes any supported file through Docling's DocumentConverter.
+    
+    This adapter supports a wide range of document formats including:
+    - Document formats: PDF, Markdown, Text, Word (DOCX/DOC), PowerPoint (PPTX/PPT),
+      Excel (XLSX/XLS), HTML, XML, EPUB, RTF, ODT, CSV, JSON, YAML
+    - Code formats: Python, JavaScript, TypeScript, Java, C++, C, Go, Ruby, PHP,
+      C#, Rust, Swift, Kotlin, Scala, R, Shell scripts, Jupyter notebooks
+    
+    For binary formats (like PDF, DOCX, etc.), proper handling requires Docling's
+    document conversion capabilities. Text-based formats can be processed directly
+    if Docling conversion fails.
+    """
 
     def __init__(self, options: Optional[Dict[str, Any]] = None) -> None:
         """Initialize the DoclingAdapter with configuration options."""
@@ -275,10 +334,10 @@ class DoclingAdapter(BaseAdapter):
             content = str(doc["content"])
         else:
             # Check the format before attempting fallback methods
-            file_extension = path_obj.suffix.lower()
+            format_name = _detect_format(path_obj)
             
-            # For binary formats like PDF, we shouldn't try to read as text
-            if file_extension in ('.pdf', '.docx', '.doc', '.pptx', '.xlsx'):
+            # For binary formats, we shouldn't try to read as text
+            if format_name in BINARY_FORMATS:
                 logger.warning(f"Failed to process binary file {path_obj} with Docling. Binary files require proper format-specific processing.")
                 raise ValueError(f"Cannot process binary file {path_obj} without proper adapter support. Document will be skipped.")
             

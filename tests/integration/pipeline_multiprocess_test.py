@@ -30,6 +30,7 @@ if project_root not in sys.path:
 from src.docproc.manager import DocumentProcessorManager
 from src.chunking.text_chunkers.chonky_chunker import chunk_text
 from src.embedding.adapters.modernbert_adapter import ModernBERTEmbeddingAdapter
+from src.docproc.adapters.docling_adapter import EXTENSION_TO_FORMAT
 
 # Custom timing formatter
 class TimingFormatter(logging.Formatter):
@@ -363,15 +364,29 @@ class PipelineMultiprocessTester:
             "file_details": {}
         }
     
-    def find_pdf_files(self) -> List[Path]:
-        """Find PDF files in the test directory."""
-        pdf_files = sorted(list(self.test_data_dir.glob("*.pdf")))
-        logger.info(f"Found {len(pdf_files)} PDF files in {self.test_data_dir}")
+    def find_supported_files(self) -> List[Path]:
+        """Find all supported file types in the test directory."""
+        supported_files = []
         
-        if len(pdf_files) > self.num_files:
+        # Use EXTENSION_TO_FORMAT to find all supported file types
+        for extension in EXTENSION_TO_FORMAT.keys():
+            # Remove the leading dot for the glob pattern
+            pattern = f"*{extension}"
+            files = list(self.test_data_dir.glob(pattern))
+            supported_files.extend(files)
+            
+            # Log the file types found
+            if files:
+                logger.info(f"Found {len(files)} {extension} files")
+        
+        # Sort files to ensure consistent order
+        supported_files = sorted(supported_files, key=lambda x: str(x))
+        logger.info(f"Found {len(supported_files)} supported files in {self.test_data_dir}")
+        
+        if len(supported_files) > self.num_files:
             # Select a representative subset
-            return pdf_files[:self.num_files]
-        return pdf_files
+            return supported_files[:self.num_files]
+        return supported_files
     
     def run_test(self) -> Dict[str, Any]:
         """Run the multiprocessing test on multiple documents."""
@@ -383,10 +398,10 @@ class PipelineMultiprocessTester:
         
         # Find files to process
         file_discovery_start = time.time()
-        files = self.find_pdf_files()
+        files = self.find_supported_files()
         file_discovery_time = time.time() - file_discovery_start
         
-        logger.info(f"Found {len(files)} PDF files in {file_discovery_time:.2f}s")
+        logger.info(f"Found {len(files)} supported files in {file_discovery_time:.2f}s")
         logger.info(f"Starting parallel processing of {len(files)} files...")
         
         # Prepare worker arguments
@@ -428,21 +443,20 @@ class PipelineMultiprocessTester:
         with open(output_file, "w") as f:
             json.dump(self.stats, f, indent=2)
         
-        # Save a sample of processed documents for inspection
+        # Save all processed documents for inspection
         sample_output = self.output_dir / "isne_input_sample.json"
         with open(sample_output, "w") as f:
-            # Take a representative subset of results
-            sample_size = min(3, len(results))
+            # Include all processed documents
             sample_data = []
-            for i in range(sample_size):
-                if i < len(results) and "file_id" in results[i]:
+            for result in results:
+                if "file_id" in result:
                     # Create a simplified sample without large embedding vectors
                     sample_item = {
-                        "file_id": results[i]["file_id"],
-                        "file_name": results[i]["file_name"],
-                        "chunk_count": len(results[i].get("chunks", [])),
-                        "embedding_count": len(results[i].get("embeddings", [])),
-                        "chunks": results[i].get("chunks", [])
+                        "file_id": result["file_id"],
+                        "file_name": result["file_name"],
+                        "chunk_count": len(result.get("chunks", [])),
+                        "embedding_count": len(result.get("embeddings", [])),
+                        "chunks": result.get("chunks", [])
                     }
                     sample_data.append(sample_item)
             json.dump(sample_data, f, indent=2)

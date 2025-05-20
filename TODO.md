@@ -194,17 +194,23 @@ After reviewing the performance of the current sequential processing pipeline, w
 
 ### Pipeline Parallelization Core Components
 
-- [ ] Implement configuration management
-  - [ ] Create `src/config/pipeline_config.yaml` for parallel processing settings
-  - [ ] Add queue configuration with memory limits and backpressure controls
-  - [ ] Implement profile system (high-throughput, balanced, low-memory)
-  - [ ] Create config loader with profile selection
+- [x] Implement configuration management
+  - [x] Created `src/config/training_pipeline_config.yaml` for parallel processing settings
+  - [x] Added device configuration with GPU/CPU execution modes
+  - [x] Implemented early environment variable setup for consistent device selection
+  - [x] Created unified config loader with pipeline type selection
 
 - [ ] Develop queue management system
   - [ ] Create `src/orchestration/core/queue_manager.py`
   - [ ] Implement memory-aware queues with backpressure mechanisms
   - [ ] Add monitoring and metrics collection
   - [ ] Implement configurable backoff strategies
+
+- [x] Implement device management
+  - [x] Implemented early environment variable setup in config_loader.py
+  - [x] Added GPU/CPU execution modes with proper fallback mechanisms
+  - [x] Implemented component-specific device configuration
+  - [x] Created consistent device handling across the pipeline
 
 - [ ] Implement worker management
   - [ ] Create `src/orchestration/core/parallel_worker.py`
@@ -214,11 +220,11 @@ After reviewing the performance of the current sequential processing pipeline, w
 
 ### Pipeline Parallelization Implementation
 
-- [ ] Develop parallel pipeline architecture
-  - [ ] Create `src/orchestration/pipelines/parallel_pipeline.py`
-  - [ ] Implement document batch processing with thread pools
-  - [ ] Add progress tracking and reporting
-  - [ ] Create pause/resume capabilities for long-running jobs
+- [x] Develop parallel pipeline architecture
+  - [x] Implemented multiprocessing test in `tests/integration/pipeline_multiprocess_test.py`
+  - [x] Added document batch processing with worker pools
+  - [x] Implemented progress tracking and reporting
+  - [x] Added performance metrics including throughput and efficiency
 
 - [ ] Create modality-specific pipelines
   - [ ] Implement `src/orchestration/pipelines/text_pipeline.py`
