@@ -1,0 +1,113 @@
+---
+# Pipeline Configuration File
+# Controls behavior of parallel processing pipelines
+
+# Global pipeline settings
+pipeline:
+  mode: "training"  # training or inference
+  save_intermediate_results: true
+  output_dir: "./test-output"
+
+# Worker thread pools
+workers:
+  docproc: 
+    count: 8
+    timeout_seconds: 600
+  chunking:
+    count: 16
+    timeout_seconds: 300
+  embedding:
+    count: 6  # Fewer since this is GPU-bound
+    timeout_seconds: 300
+  isne:
+    count: 4
+    timeout_seconds: 600
+
+# Queue configurations
+queues:
+  docproc_output:
+    max_size: 50           # Maximum items in queue
+    max_memory_mb: 16384   # Larger value for high-RAM system
+    backpressure_threshold: 0.8  # When to start applying backpressure
+    backoff_strategy: "exponential"  # linear, exponential
+    backoff_base_seconds: 0.1
+    backoff_max_seconds: 5.0
+  
+  chunking_output:
+    max_size: 100
+    max_memory_mb: 32768   # Chunks can use more memory
+    backpressure_threshold: 0.7
+    backoff_strategy: "exponential"
+    backoff_base_seconds: 0.1
+    backoff_max_seconds: 5.0
+  
+  embedding_output:
+    max_size: 200
+    max_memory_mb: 65536   # Embeddings use significant memory
+    backpressure_threshold: 0.6
+    backoff_strategy: "exponential"
+    backoff_base_seconds: 0.1
+    backoff_max_seconds: 5.0
+
+# Monitoring settings
+monitoring:
+  check_interval_seconds: 5
+  metrics_log_interval_seconds: 30
+  enable_memory_warnings: true
+  memory_warning_threshold_percent: 85
+
+# Processing limits - useful for testing different corpus sizes
+limits:
+  max_documents: null      # null = no limit
+  max_chunks_per_document: null
+  max_tokens_per_chunk: 2048
+
+# Performance profiles - quick selection of preset configurations
+profiles:
+  high_throughput:
+    workers:
+      docproc:
+        count: 16
+      chunking:
+        count: 32
+      embedding:
+        count: 8
+    queues:
+      docproc_output:
+        max_memory_mb: 65536
+      chunking_output:
+        max_memory_mb: 98304
+      embedding_output:
+        max_memory_mb: 131072
+  
+  balanced:
+    workers:
+      docproc:
+        count: 8
+      chunking:
+        count: 16
+      embedding:
+        count: 6
+    queues:
+      docproc_output:
+        max_memory_mb: 16384
+      chunking_output:
+        max_memory_mb: 32768
+      embedding_output:
+        max_memory_mb: 65536
+  
+  low_memory:
+    workers:
+      docproc:
+        count: 4
+      chunking:
+        count: 8
+      embedding:
+        count: 2
+    queues:
+      docproc_output:
+        max_memory_mb: 4096
+      chunking_output:
+        max_memory_mb: 8192
+      embedding_output:
+        max_memory_mb: 16384

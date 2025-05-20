@@ -21,7 +21,8 @@ from src.chunking.text_chunkers.chonky_chunker import (
     _hash_path
 )
 
-from src.schema.document_schema import DocumentSchema, DocumentType, ChunkMetadata, SchemaVersion
+from src.schemas.documents.base import DocumentSchema, ChunkMetadata
+from src.schemas.common.enums import DocumentType, SchemaVersion
 
 logger = logging.getLogger(__name__)
 

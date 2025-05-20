@@ -11,8 +11,12 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
+# Import from the centralized schema structure
+from src.schemas.common.base import BaseSchema
+from src.schemas.common.types import MetadataDict
 
-class BaseEntity(BaseModel):
+
+class BaseEntity(BaseSchema):
     """Basic entity extracted from document content."""
     
     type: str = Field(..., description="Type of the entity")
@@ -31,7 +35,7 @@ class BaseEntity(BaseModel):
     model_config = ConfigDict(extra="allow")  # Allow additional fields for adapter-specific entities
 
 
-class BaseMetadata(BaseModel):
+class BaseMetadata(BaseSchema):
     """Common document metadata across all document types."""
     
     language: str = Field(..., description="Language of the document (e.g., 'python', 'en')")
@@ -45,7 +49,7 @@ class BaseMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")  # Allow format-specific metadata fields
 
 
-class BaseDocument(BaseModel):
+class BaseDocument(BaseSchema):
     """Base document model that all processed documents must conform to."""
     
     id: str = Field(..., min_length=4, description="Unique identifier for the document")

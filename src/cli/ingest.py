@@ -14,10 +14,10 @@ from typing import Dict, List, Any, Optional, cast
 import json
 from datetime import datetime
 
-from src.ingest.orchestrator.ingestor import RepositoryIngestor
+from src.pipelines.ingest.orchestrator.ingestor import RepositoryIngestor
 from src.storage.arango.connection import ArangoConnection
 from src.types.common import StorageConfig, PreProcessorConfig
-from src.ingest.repository.arango_repository import ArangoRepository
+from src.storage.arango.repository import ArangoRepository
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -105,14 +105,27 @@ def ingest_documentation(docs_dir: Path, dataset_name: Optional[str] = None,
     # Get configuration
     config = create_documentation_config(db_name=db_name)
     
-    # Create repository ingestor
+    # Convert configurations to expected format for RepositoryIngestor
+    from src.pipelines.ingest.orchestrator.config import IngestionConfig
+    
+    # Create IngestionConfig object from our configuration dictionary
+    ingest_config = IngestionConfig()
+    # Apply storage config
+    ingest_config.storage.update(config["storage"])
+    # Apply preprocessor config
+    ingest_config.preprocessor.update(config["preprocessor"])
+    # Set initialize_db based on db_mode
+    ingest_config.initialize_db = (db_mode == "create")
+    
+    logger.info(f"Initializing ingestor with db_mode: {db_mode} (initialize_db={ingest_config.initialize_db})")
+    
+    # Create repository ingestor with the proper config
     ingestor = RepositoryIngestor(
-        storage_config=config["storage"],
-        preprocessor_config=config["preprocessor"]
+        config=ingest_config,
     )
     
     # Handle database mode
-    repository = ingestor.get_repository()
+    repository = ingestor.repository
     if db_mode == "create" and repository:
         # Cast to ArangoRepository to access its specific attributes
         arango_repo = cast(ArangoRepository, repository)

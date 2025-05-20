@@ -1,5 +1,56 @@
 # HADES-PathRAG: Implementation Tasks
 
+## Priority #1: Standardize Schema Validation and Type Checking with Pydantic v2
+
+### Implementation Plan Overview
+
+We need to standardize our approach to schema validation and type checking across the entire codebase by using Pydantic v2 consistently. Currently, we have a mix of TypedDict, Protocol, and Pydantic models across different modules, which creates inconsistency and potential maintenance issues. By centralizing on Pydantic v2, we can enforce both schema validation and static type checking in a single system.
+
+### Migration Strategy
+
+- [ ] Create a centralized schema directory
+  - [ ] Create `src/schemas/` to house all Pydantic models
+  - [ ] Organize models by domain (documents, embeddings, ISNE, etc.)
+  - [ ] Ensure proper documentation with examples
+
+- [ ] Create a migration roadmap for each module
+  - [ ] docproc: Move existing Pydantic models to src/schemas
+  - [ ] embedding: Replace Protocol/TypeVar with Pydantic models
+  - [ ] chunking: Standardize on Pydantic for all schemas
+  - [ ] isne: Convert TypedDict definitions to Pydantic models
+  - [ ] pipelines: Implement Pydantic validation for pipeline inputs/outputs
+
+- [ ] Implement schema validation at module boundaries
+  - [ ] Add validation to module input functions
+  - [ ] Add validation before data is passed between major components
+  - [ ] Add validation before persistence to storage
+  - [ ] Ensure validation errors are properly handled and reported
+
+- [ ] Update unit tests
+  - [ ] Create test fixtures for schema validation
+  - [ ] Add validation tests for each schema
+  - [ ] Ensure failure cases are properly tested
+
+- [ ] Documentation and tooling
+  - [ ] Document schema validation approach
+  - [ ] Add schema export utilities for API documentation
+  - [ ] Create validation helper utilities for pipeline stages
+
+### Benefits
+
+- Single source of truth for data structures
+- Runtime validation and static type checking in one system
+- Improved error messages and debugging
+- Better IDE support and code completion
+- Consistent approach across all modules
+- JSON Schema generation for API documentation
+
+### Implementation Approach
+
+1. **Phase 1**: Create schema directory and migrate existing Pydantic models
+2. **Phase 2**: Convert TypedDict and Protocol interfaces to Pydantic
+3. **Phase 3**: Implement validation at module boundaries
+4. **Phase 4**: Update tests and documentation
 ## Text Storage Module Implementation
 
 ### Implementation Plan Overview

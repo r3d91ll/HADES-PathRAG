@@ -9,7 +9,10 @@ validation of Python-specific fields and relationships.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional, Union
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import Field, field_validator, model_validator, ConfigDict
+
+from src.schemas.common.base import BaseSchema
+from src.schemas.common.types import MetadataDict
 
 from src.docproc.schemas.base import BaseDocument, BaseEntity, BaseMetadata
 from src.docproc.models.python_code import RelationshipType, AccessLevel
@@ -34,7 +37,7 @@ class PythonEntity(BaseEntity):
     )
 
 
-class CodeRelationship(BaseModel):
+class CodeRelationship(BaseSchema):
     """Relationship between code elements."""
     
     source: str = Field(..., description="Source element identifier")
@@ -53,7 +56,7 @@ class CodeRelationship(BaseModel):
         return v
 
 
-class CodeElement(BaseModel):
+class CodeElement(BaseSchema):
     """Generic code element."""
     
     type: str = Field(..., description="Type of code element")
@@ -110,7 +113,7 @@ class ImportElement(CodeElement):
     source: str = Field(..., description="Import source type")
 
 
-class SymbolTable(BaseModel):
+class SymbolTable(BaseSchema):
     """Python module symbol table."""
     
     type: Literal["module"] = "module"
@@ -121,7 +124,6 @@ class SymbolTable(BaseModel):
     line_range: Optional[List[int]] = Field(None, description="Line range [start, end]")
     elements: List[Dict[str, Any]] = Field(default_factory=list, description="Module elements")
     
-    model_config = ConfigDict(extra="allow")  # Allow additional fields
 
 
 class PythonDocument(BaseDocument):

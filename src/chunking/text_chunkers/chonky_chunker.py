@@ -59,7 +59,8 @@ from contextlib import contextmanager
 from pydantic import BaseModel
 
 # Import the schema types
-from src.schema.document_schema import DocumentType, SchemaVersion, ChunkMetadata
+from src.schemas.documents.base import ChunkMetadata
+from src.schemas.common.enums import DocumentType, SchemaVersion
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ class BaseDocument(BaseModel):
     id: str = ""
     chunks: List[Dict[str, Any]] = []
 
-# NOTE: ChunkMetadata is now imported from src.schema.document_schema
+# NOTE: ChunkMetadata is now imported from src.schemas.documents.base
 
 # Define our document types
 from typing import Type, TypeVar, cast, Any as TypeAny, Union as TypeUnion
@@ -140,7 +141,7 @@ class DocumentSchemaBase(BaseModel):
 
 # Try to import DocumentSchema from schema module
 try:
-    from src.schema.document_schema import DocumentSchema as ImportedDocumentSchema
+    from src.schemas.documents.base import DocumentSchema as ImportedDocumentSchema
     # Use the imported DocumentSchema
     DocumentSchema = ImportedDocumentSchema
 except ImportError:
