@@ -1,6 +1,6 @@
 # HADES-PathRAG: Implementation Tasks
 
-## Priority #1: Standardize Schema Validation and Type Checking with Pydantic v2
+## Priority #1: Standardize Schema Validation and Type Checking with Pydantic v2 ✅
 
 ### Implementation Plan Overview
 
@@ -8,33 +8,42 @@ We need to standardize our approach to schema validation and type checking acros
 
 ### Migration Strategy
 
-- [ ] Create a centralized schema directory
-  - [ ] Create `src/schemas/` to house all Pydantic models
-  - [ ] Organize models by domain (documents, embeddings, ISNE, etc.)
-  - [ ] Ensure proper documentation with examples
+- [x] Create a centralized schema directory
+  - [x] Create `src/schemas/` to house all Pydantic models
+  - [x] Organize models by domain (documents, embeddings, ISNE, etc.)
+  - [x] Ensure proper documentation with examples
 
-- [ ] Create a migration roadmap for each module
-  - [ ] docproc: Move existing Pydantic models to src/schemas
-  - [ ] embedding: Replace Protocol/TypeVar with Pydantic models
-  - [ ] chunking: Standardize on Pydantic for all schemas
-  - [ ] isne: Convert TypedDict definitions to Pydantic models
-  - [ ] pipelines: Implement Pydantic validation for pipeline inputs/outputs
+- [x] Create a migration roadmap for each module
+  - [x] docproc: Move existing Pydantic models to src/schemas
+  - [x] embedding: Replace Protocol/TypeVar with Pydantic models
+  - [x] chunking: Standardize on Pydantic for all schemas
+  - [x] isne: Convert TypedDict definitions to Pydantic models
+  - [x] pipelines: Implement Pydantic validation for pipeline inputs/outputs
 
-- [ ] Implement schema validation at module boundaries
-  - [ ] Add validation to module input functions
-  - [ ] Add validation before data is passed between major components
-  - [ ] Add validation before persistence to storage
-  - [ ] Ensure validation errors are properly handled and reported
+- [x] Implement schema validation at module boundaries
+  - [x] Add validation to module input functions
+  - [x] Add validation before data is passed between major components
+  - [x] Add validation before persistence to storage
+  - [x] Ensure validation errors are properly handled and reported
 
-- [ ] Update unit tests
-  - [ ] Create test fixtures for schema validation
-  - [ ] Add validation tests for each schema
-  - [ ] Ensure failure cases are properly tested
+- [x] Update unit tests
+  - [x] Create test fixtures for schema validation
+  - [x] Add validation tests for each schema
+  - [x] Ensure failure cases are properly tested
 
-- [ ] Documentation and tooling
-  - [ ] Document schema validation approach
-  - [ ] Add schema export utilities for API documentation
-  - [ ] Create validation helper utilities for pipeline stages
+- [x] Documentation and tooling
+  - [x] Document schema validation approach
+  - [x] Add schema export utilities for API documentation
+  - [x] Create validation helper utilities for pipeline stages
+
+### Integration Script Improvements ✅
+
+- [x] Update ArangoDB integration scripts
+  - [x] Add explicit database mode control (create vs append)
+  - [x] Implement proper force recreation option
+  - [x] Fix collection initialization in create mode
+  - [x] Update CLI script to work with revised schemas
+  - [x] Improve error handling and logging
 
 ### Benefits
 
@@ -47,13 +56,15 @@ We need to standardize our approach to schema validation and type checking acros
 
 ### Implementation Approach
 
-1. **Phase 1**: Create schema directory and migrate existing Pydantic models
-2. **Phase 2**: Convert TypedDict and Protocol interfaces to Pydantic
-3. **Phase 3**: Implement validation at module boundaries
-4. **Phase 4**: Update tests and documentation
+1. **Phase 1** ✅: Create schema directory and migrate existing Pydantic models
+2. **Phase 2** ✅: Convert TypedDict and Protocol interfaces to Pydantic
+3. **Phase 3** ✅: Update integration scripts and CLI tools to work with new schemas
+4. **Phase 4** ✅: Implement validation at module boundaries
+5. **Phase 5** ✅: Update tests and documentation
+
 ## Text Storage Module Implementation
 
-### Implementation Plan Overview
+### Text Storage Module Implementation Plan Overview
 
 We've implemented and refined the text storage module to better support the HADES-PathRAG architecture, focusing on improving the storage and retrieval of text documents, chunks, and embeddings through ArangoDB. This includes renaming PDF-specific components to handle text documents more generically.
 
@@ -181,7 +192,7 @@ After reviewing the performance of the current sequential processing pipeline, w
   - [ ] Create `src/orchestration/pipelines/` for specific pipeline implementations
   - [ ] Move relevant files from `src/pipelines/ingest/orchestrator/`
 
-### Core Components
+### Pipeline Parallelization Core Components
 
 - [ ] Implement configuration management
   - [ ] Create `src/config/pipeline_config.yaml` for parallel processing settings
@@ -201,7 +212,7 @@ After reviewing the performance of the current sequential processing pipeline, w
   - [ ] Add error handling and retry mechanisms
   - [ ] Create monitoring for worker performance
 
-### Pipeline Implementation
+### Pipeline Parallelization Implementation
 
 - [ ] Develop parallel pipeline architecture
   - [ ] Create `src/orchestration/pipelines/parallel_pipeline.py`
@@ -235,7 +246,6 @@ After reviewing the performance of the current sequential processing pipeline, w
   │   ├── __init__.py
   │   └── geometric_utils.py
   └── pipeline.py
-```
 ```
 
 ### Implementation Phases
@@ -710,15 +720,27 @@ This document outlines the critical tasks that must be completed before proceedi
 ### Test Coverage Primary Tasks
 
 - [ ] Achieve ≥85% test coverage across all modules
+  - [x] Schemas module: Improved coverage from ~70% to 97%
+  - [x] Common types module: Improved coverage from 53% to 68%
+  - [ ] Remaining modules: Continue improving to reach 85% target
 - [ ] Implement integration tests for all critical paths
+  - [x] Integration scripts (CLI and orchestrator)
+  - [ ] Database transactions and queries
+  - [ ] End-to-end pipeline flow
 - [ ] Create performance regression tests
 - [ ] Add edge case testing for error handling
+  - [x] Schema validation edge cases
+  - [ ] Network and I/O failure scenarios
 
 ### Implementation Steps for Test Coverage
 
-1. Identify modules with insufficient coverage
-2. Create targeted unit tests for uncovered code
-3. Implement integration tests for module interactions
+1. ✅ Identify modules with insufficient coverage
+2. ✅ Create targeted unit tests for uncovered code
+   - Added comprehensive tests for UUIDStr validation
+   - Added tests for schema validation with both enum objects and primitive values
+   - Created tests for type aliases and embedding vectors
+3. 🔄 Implement integration tests for module interactions
+   - Updated CLI integration script to properly use new schema components
 
 ## 9. Future Enhancements and Optimizations
 
