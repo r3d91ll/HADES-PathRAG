@@ -3,7 +3,7 @@
 Multiprocessing implementation of the document processing pipeline test.
 
 This test demonstrates true parallel processing of documents using Python's multiprocessing
-module, with configurable GPU/CPU resource allocation based on the pipeline_config.yaml.
+module, with configurable GPU/CPU resource allocation based on the training_pipeline_config.yaml.
 """
 
 import os
@@ -69,11 +69,30 @@ logger = logging.getLogger(__name__)
 
 # Load the pipeline configuration
 def load_pipeline_config() -> Dict[str, Any]:
-    """Load the pipeline configuration from YAML."""
-    config_path = Path(project_root) / "src" / "config" / "pipeline_config.yaml"
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    return config
+    """Load the training pipeline configuration from YAML.
+    
+    This function attempts to use the new config_loader module first,
+    and falls back to direct file loading if that's not available.
+    """
+    try:
+        # Try to use the new config_loader module first
+        from src.config.config_loader import load_pipeline_config as load_config
+        return load_config(pipeline_type='training')
+    except ImportError:
+        # Fall back to direct file loading
+        config_path = Path(project_root) / "src" / "config" / "training_pipeline_config.yaml"
+        if not config_path.exists():
+            # Check for old filename as a last resort
+            old_path = Path(project_root) / "src" / "config" / "pipeline_config.yaml"
+            if old_path.exists():
+                config_path = old_path
+                logger.warning(f"Using deprecated pipeline_config.yaml. Please update to training_pipeline_config.yaml.")
+            else:
+                raise FileNotFoundError(f"Cannot find pipeline configuration at {config_path} or {old_path}")
+                
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+        return config
 
 # Initialize components based on the configuration
 def init_docproc(config: Dict[str, Any], worker_id: int) -> Dict[str, Any]:
@@ -301,7 +320,13 @@ def process_document(args: Tuple[Path, Dict[str, Any], int]) -> Dict[str, Any]:
     return result
 
 class PipelineMultiprocessTester:
-    """Test parallel processing of documents using true multiprocessing."""
+    """Test parallel processing of documents using true multiprocessing.
+    
+    This class coordinates the parallel processing of documents using configuration
+    settings from the training_pipeline_config.yaml file. It demonstrates how to use
+    the training pipeline components (document processing, chunking, and embedding)
+    in a multiprocessing environment with proper GPU resource allocation.
+    """
     
     def __init__(
         self,
