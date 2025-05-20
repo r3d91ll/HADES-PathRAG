@@ -7,13 +7,57 @@ including the pipeline configuration and component-specific configs.
 
 import os
 import yaml
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Define the paths to the configuration files
 CONFIG_DIR = Path(__file__).parent
 TRAINING_PIPELINE_CONFIG_PATH = CONFIG_DIR / 'training_pipeline_config.yaml'
 PIPELINE_CONFIG_PATH = TRAINING_PIPELINE_CONFIG_PATH  # For backward compatibility
+
+# Set CUDA_VISIBLE_DEVICES at module import time, before any PyTorch imports
+# This ensures GPU settings are applied early enough to affect all components
+def _apply_cuda_environment_variables() -> None:
+    """Apply CUDA environment variables from pipeline configuration at module import time.
+    
+    This function is called immediately when the module is imported to ensure
+    CUDA_VISIBLE_DEVICES is set before any PyTorch imports.
+    """
+    try:
+        # Load the training pipeline config to check device settings
+        path = TRAINING_PIPELINE_CONFIG_PATH
+        if not path.exists():
+            return
+            
+        with open(path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Check if there's a device_config section
+        if config and 'pipeline' in config and 'device_config' in config['pipeline']:
+            device_config = config['pipeline']['device_config']
+            
+            # Get CUDA_VISIBLE_DEVICES from pipeline config if it exists
+            if 'CUDA_VISIBLE_DEVICES' in device_config:
+                cuda_devices = device_config['CUDA_VISIBLE_DEVICES']
+                
+                # Apply this setting - explicitly overwrites any existing environment variable
+                # to ensure the config file takes precedence
+                if cuda_devices is not None:  # None means use system default
+                    # Ensure it's set in the proper uppercase format
+                    os.environ['CUDA_VISIBLE_DEVICES'] = str(cuda_devices)
+                    # Print instead of log since logging may not be configured yet
+                    print(f"Setting CUDA_VISIBLE_DEVICES to '{cuda_devices}' at module import time")
+    except Exception as e:
+        # Print to stderr since logging may not be configured yet
+        import sys
+        print(f"Error setting CUDA_VISIBLE_DEVICES from config: {e}", file=sys.stderr)
+
+# Execute immediately at import time
+_apply_cuda_environment_variables()
 
 
 def load_yaml_config(config_path: Union[str, Path]) -> Dict[str, Any]:
