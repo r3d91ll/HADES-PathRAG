@@ -9,6 +9,8 @@ __all__ = [
     "ISNEConfig",
     "ISNETrainingConfig",
     "ISNEModelConfig",
+    "ISNEGraphConfig",
+    "ISNEDirectoriesConfig",
     "DocumentType",
     "RelationType",
     "IngestDocument",

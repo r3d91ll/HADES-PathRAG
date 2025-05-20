@@ -295,12 +295,16 @@ def process_document(args: Tuple[Path, Dict[str, Any], int]) -> Dict[str, Any]:
         
         # Convert embeddings to lists for JSON serialization
         embeddings_list = []
-        for emb in embeddings:
+        for i, emb in enumerate(embeddings):
             if isinstance(emb, np.ndarray):
                 emb_list = emb.tolist()
             else:
                 emb_list = emb
             embeddings_list.append(emb_list)
+            
+            # Also attach embedding directly to the corresponding chunk for ISNE
+            if i < len(result["chunks"]):
+                result["chunks"][i]["embedding"] = emb_list
         
         result["embeddings"] = embeddings_list
         
@@ -388,8 +392,16 @@ class PipelineMultiprocessTester:
             return supported_files[:self.num_files]
         return supported_files
     
-    def run_test(self) -> Dict[str, Any]:
-        """Run the multiprocessing test on multiple documents."""
+    def run_test(self, run_isne_training=False) -> Dict[str, Any]:
+        """
+        Run the pipeline multiprocessing test.
+        
+        Args:
+            run_isne_training: If True, will run ISNE training directly with in-memory data after pipeline processing
+            
+        Returns:
+            Dictionary with test statistics and results
+        """
         logger.info("=== Starting Multiprocessing Pipeline Test ===")
         logger.info(f"Max Workers: {self.max_workers}, Batch Size: {self.batch_size}, Files to Process: {self.num_files}")
         
@@ -508,11 +520,69 @@ class PipelineMultiprocessTester:
         logger.info(f"  Actual Speedup:       {actual_speedup:.2f}x")
         logger.info(f"  Efficiency:           {efficiency:.2f} ({efficiency*100:.1f}%)")
         
-        logger.info("\n=== End Performance Report ===")
-        logger.info(f"=== Completed Multiprocessing Pipeline Test in {total_runtime:.2f} seconds ===")
-        logger.info(f"Processed {self.stats['total_files']} files with {self.stats['total_chunks']} chunks")
+        logger.info("\nPipeline Test Completed Successfully!")
+        logger.info(f"  - Processed {self.stats['total_files']} files with {self.stats['total_chunks']} chunks")
+        logger.info(f"  - Generated {self.stats['total_embeddings']} embeddings with dimension {self.config.get('embedding', {}).get('dimension', 'unknown')}")
+        logger.info(f"  - Saved results to {self.output_dir}")
+        
+        # Optional: Run ISNE training directly with in-memory data if requested
+        if run_isne_training:
+            logger.info("\n=== Starting In-Memory ISNE Training ===")
+            try:
+                # Run the direct ISNE training with the documents we already have in memory
+                isne_results = self.direct_train_isne(results)
+                logger.info(f"ISNE Training Completed Successfully!")
+                logger.info(f"  - Trained model saved to {Path('./models/isne')}")
+                # Add ISNE results to our stats
+                self.stats["isne_training"] = isne_results
+            except Exception as e:
+                logger.error(f"Error during in-memory ISNE training: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
         
         return self.stats
+    
+    def direct_train_isne(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Demonstrate direct in-memory handoff of document data to ISNE training.
+        
+        This method shows how to pass document objects directly to the ISNE training
+        orchestrator without writing them to disk first, which is more efficient for
+        production environments.
+        
+        Args:
+            results: List of processed document results from the pipeline
+        
+        Returns:
+            Training results from the ISNE training orchestrator
+        """
+        from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
+        
+        logger.info("Demonstrating direct in-memory handoff to ISNE training...")
+        
+        # Prepare documents for ISNE training (keep full embeddings)
+        documents = []
+        for result in results:
+            if "file_id" in result:
+                # Use the complete document with embeddings
+                documents.append(result)
+        
+        logger.info(f"Passing {len(documents)} documents directly to ISNE training orchestrator")
+        
+        # Create the orchestrator with in-memory documents
+        orchestrator = ISNETrainingOrchestrator(
+            documents=documents,  # Pass documents directly in memory
+            output_dir=self.output_dir / "isne-training",
+            model_output_dir=Path("./models/isne"),
+            device="cpu"  # Use CPU as per user preference for now
+        )
+        
+        # Run training
+        logger.info("Starting ISNE training with in-memory documents...")
+        training_results = orchestrator.train()
+        
+        # Return training results
+        return training_results
 
 # Initialize multiprocessing
 def init_mp():
@@ -522,28 +592,40 @@ def init_mp():
         mp.set_start_method('spawn', force=True)
 
 def main():
-    """Main entry point for the script."""
-    parser = argparse.ArgumentParser(description='Test parallel document processing with true multiprocessing')
-    parser.add_argument('--test-data', type=str, default='./test-data', help='Directory containing test PDF files')
-    parser.add_argument('--output-dir', type=str, default='./test-output/pipeline-mp-test', help='Output directory')
-    parser.add_argument('--num-files', type=int, default=10, help='Number of files to process')
-    parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of parallel workers')
-    parser.add_argument('--batch-size', type=int, default=8, help='Batch size for processing')
+    """
+    Run the pipeline multiprocessing test as a standalone script.
+    """
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Pipeline Multiprocessing Test')
+    parser.add_argument('--workers', type=int, default=4,
+                        help='Number of worker processes')
+    parser.add_argument('--files', type=int, default=10,
+                        help='Maximum number of files to process')
+    parser.add_argument('--data-dir', type=str, default='./test-data',
+                        help='Directory containing test data')
+    parser.add_argument('--output-dir', type=str, default='./test-output/pipeline-mp-test',
+                        help='Directory for test output')
+    parser.add_argument('--run-isne', action='store_true',
+                        help='Run ISNE training directly with in-memory data after pipeline processing')
     
     args = parser.parse_args()
     
-    # Initialize multiprocessing environment
-    init_mp()
-    
     # Run the test
-    tester = PipelineMultiprocessTester(
-        test_data_dir=args.test_data,
+    test = PipelineMultiprocessTester(
+        test_data_dir=args.data_dir,
         output_dir=args.output_dir,
-        num_files=args.num_files,
-        max_workers=args.max_workers,
-        batch_size=args.batch_size
+        num_files=args.files,
+        max_workers=args.workers,
+        batch_size=8  # Default batch size
     )
-    tester.run_test()
+    
+    test.run_test(run_isne_training=args.run_isne)
 
 if __name__ == "__main__":
     # Configure for multiprocessing on Windows

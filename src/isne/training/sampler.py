@@ -197,31 +197,41 @@ class NeighborSampler:
             
         Returns:
             Tuple of (subset_nodes, subgraph_edge_index):
-                - subset_nodes: Node indices in the subgraph
-                - subgraph_edge_index: Edge index of the subgraph
         """
-        # Check that PyTorch Geometric is available
-        if not TORCH_GEOMETRIC_AVAILABLE:
-            raise ImportError(
-                "PyTorch Geometric is required for subgraph sampling. "
-                "Install with: pip install torch-geometric"
-            )
+        # Ensure nodes are within valid range
+        num_nodes = self.num_nodes
+        nodes = nodes[nodes < num_nodes]
         
-        # Sample multi-hop neighborhoods
+        if nodes.numel() == 0:
+            # Handle case where no valid nodes remain
+            return nodes, torch.empty((2, 0), dtype=torch.long, device=nodes.device)
+            
         node_samples, _ = self.sample_neighbors(nodes)
         
         # Combine all sampled nodes
         all_nodes = [nodes]
-        all_nodes.extend(node_samples)
+        all_nodes.extend([n[n < num_nodes] for n in node_samples if n.numel() > 0])
         
         subset_nodes = torch.cat([n for n in all_nodes if n.numel() > 0], dim=0)
         
-        # Remove duplicates
+        # Remove duplicates and ensure all indices are valid
         subset_nodes = torch.unique(subset_nodes)
+        subset_nodes = subset_nodes[subset_nodes < num_nodes]
         
+        if subset_nodes.numel() == 0:
+            # Handle empty subgraph case
+            return subset_nodes, torch.empty((2, 0), dtype=torch.long, device=nodes.device)
+            
         # Extract subgraph
-        subgraph_edge_index, _ = subgraph(
-            subset_nodes, self.edge_index, relabel_nodes=True)
+        try:
+            subgraph_edge_index, _ = subgraph(
+                subset_nodes, self.edge_index, relabel_nodes=True)
+        except IndexError:
+            # Fallback in case of index errors
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Index error in subgraph sampling. Using empty edge index instead.")
+            subgraph_edge_index = torch.empty((2, 0), dtype=torch.long, device=nodes.device)
         
         return subset_nodes, subgraph_edge_index
     

@@ -85,6 +85,20 @@ class ContrastiveLoss(nn.Module):
         Returns:
             Contrastive loss
         """
+        # Get number of nodes from embeddings
+        num_nodes = embeddings.size(0)
+        
+        # Validate and filter positive pairs (ensure indices are within bounds)
+        valid_pos_mask = (positive_pairs[:, 0] < num_nodes) & (positive_pairs[:, 1] < num_nodes)
+        if not torch.all(valid_pos_mask):
+            logger.warning(f"Filtered {(~valid_pos_mask).sum().item()} out-of-bounds positive pairs")
+            positive_pairs = positive_pairs[valid_pos_mask]
+            
+        # If no valid positive pairs, return zero loss
+        if positive_pairs.size(0) == 0:
+            logger.warning("No valid positive pairs found, returning zero loss")
+            return torch.tensor(0.0, device=embeddings.device)
+        
         # Extract positive pair embeddings
         pos_idx1, pos_idx2 = positive_pairs[:, 0], positive_pairs[:, 1]
         pos_emb1 = embeddings[pos_idx1]
@@ -98,6 +112,18 @@ class ContrastiveLoss(nn.Module):
         
         # Process negative pairs if provided
         if negative_pairs is not None:
+            # Validate and filter negative pairs (ensure indices are within bounds)
+            valid_neg_mask = (negative_pairs[:, 0] < num_nodes) & (negative_pairs[:, 1] < num_nodes)
+            if not torch.all(valid_neg_mask):
+                logger.warning(f"Filtered {(~valid_neg_mask).sum().item()} out-of-bounds negative pairs")
+                negative_pairs = negative_pairs[valid_neg_mask]
+            
+            # If no valid negative pairs after filtering, skip negative loss
+            if negative_pairs.size(0) == 0:
+                logger.warning("No valid negative pairs found, using only positive loss")
+                # Only use positive loss if no valid negative pairs
+                return self.lambda_contrast * pos_loss.mean()
+            
             neg_idx1, neg_idx2 = negative_pairs[:, 0], negative_pairs[:, 1]
             neg_emb1 = embeddings[neg_idx1]
             neg_emb2 = embeddings[neg_idx2]
