@@ -12,7 +12,8 @@ from typing import Dict, Any, Optional, Union
 
 # Define the paths to the configuration files
 CONFIG_DIR = Path(__file__).parent
-PIPELINE_CONFIG_PATH = CONFIG_DIR / 'pipeline_config.yaml'
+TRAINING_PIPELINE_CONFIG_PATH = CONFIG_DIR / 'training_pipeline_config.yaml'
+PIPELINE_CONFIG_PATH = TRAINING_PIPELINE_CONFIG_PATH  # For backward compatibility
 
 
 def load_yaml_config(config_path: Union[str, Path]) -> Dict[str, Any]:
@@ -39,17 +40,33 @@ def load_yaml_config(config_path: Union[str, Path]) -> Dict[str, Any]:
     return config or {}
 
 
-def load_pipeline_config(config_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+def load_pipeline_config(config_path: Optional[Union[str, Path]] = None, pipeline_type: str = 'training') -> Dict[str, Any]:
     """
     Load the pipeline configuration.
     
     Args:
         config_path: Path to the pipeline configuration file (optional, uses default if not provided)
+        pipeline_type: Type of pipeline configuration to load ('training', 'ingestion', etc.)
         
     Returns:
         Dictionary with pipeline configuration values
     """
-    path = Path(config_path) if config_path else PIPELINE_CONFIG_PATH
+    # If a specific path is provided, use it
+    if config_path:
+        path = Path(config_path)
+    # Otherwise, select the appropriate config file based on the pipeline type
+    else:
+        if pipeline_type == 'training':
+            path = TRAINING_PIPELINE_CONFIG_PATH
+        elif pipeline_type == 'ingestion':
+            # Will be implemented in the future
+            path = CONFIG_DIR / 'ingestion_pipeline_config.yaml'
+            if not path.exists():
+                # Fall back to training config if specific config doesn't exist yet
+                path = TRAINING_PIPELINE_CONFIG_PATH
+        else:
+            # Default to training pipeline for unknown types
+            path = TRAINING_PIPELINE_CONFIG_PATH
     
     try:
         config = load_yaml_config(path)
@@ -57,18 +74,21 @@ def load_pipeline_config(config_path: Optional[Union[str, Path]] = None) -> Dict
     except Exception as e:
         # Log the error but don't crash
         import logging
-        logging.getLogger(__name__).warning(f"Error loading pipeline config: {e}")
+        logging.getLogger(__name__).warning(f"Error loading {pipeline_type} pipeline config: {e}")
         return {}
 
 
-def get_device_config() -> Dict[str, Any]:
+def get_device_config(pipeline_type: str = 'training') -> Dict[str, Any]:
     """
     Get the device configuration settings from the pipeline configuration.
     
+    Args:
+        pipeline_type: Type of pipeline configuration to load ('training', 'ingestion', etc.)
+        
     Returns:
         Dictionary with device configuration values
     """
-    config = load_pipeline_config()
+    config = load_pipeline_config(pipeline_type=pipeline_type)
     
     # Check if GPU execution is enabled
     if 'gpu_execution' in config and config['gpu_execution'].get('enabled', False):
@@ -98,17 +118,18 @@ def get_device_config() -> Dict[str, Any]:
     }
 
 
-def get_component_device(component_name: str) -> Optional[str]:
+def get_component_device(component_name: str, pipeline_type: str = 'training') -> Optional[str]:
     """
     Get the device configuration for a specific component.
     
     Args:
         component_name: Name of the component (e.g., 'docproc', 'chunking', 'embedding')
+        pipeline_type: Type of pipeline configuration to load ('training', 'ingestion', etc.)
         
     Returns:
         Device string (e.g., 'cuda:1') or None if not configured
     """
-    device_config = get_device_config()
+    device_config = get_device_config(pipeline_type=pipeline_type)
     
     if device_config['mode'] == 'gpu':
         component_config = device_config['config'].get(component_name, {})
