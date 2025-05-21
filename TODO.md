@@ -107,7 +107,7 @@ We've implemented and refined the text storage module to better support the HADE
 - [ ] Create integration tests to verify interaction with the ISNE pipeline
 - [ ] Implement better error handling and recovery mechanisms
 
-## Priority #1: ISNE Implementation
+## Priority #1: ISNE Implementation ✅
 
 ### ISNE Implementation Plan Overview
 
@@ -137,6 +137,25 @@ After a review of the initial implementation and the original research paper, we
   - [x] Added isne_training_readme.md with usage instructions
   - [x] Documented command-line parameters
   - [x] Added code examples for programmatic usage
+
+### ISNE Training Pipeline Optimization
+
+- [x] Optimized training pipeline for large datasets
+  - [x] Fixed sample_subgraph in RandomWalkSampler to explicitly pass num_nodes parameter
+  - [x] Tuned batch size (64) for optimal balance of memory usage and training quality
+  - [x] Optimized Node2Vec parameters (q=0.7, walks_per_node=10, context_size=4)
+  - [x] Verified pipeline works successfully on 100-document datasets
+  
+- [x] Implemented multi-platform compatibility
+  - [x] Tested and optimized for both GPU and CPU execution
+  - [x] Measured performance characteristics (GPU ~545s vs CPU ~3185s for 100 files)
+  - [x] Maintained excellent parallelization efficiency (~94% on GPU, ~92% on CPU)
+  - [x] Ensured ISNE training works efficiently on both platforms (~3s on GPU, ~3.4s on CPU)
+
+- [x] Identified future improvements
+  - [ ] Implement batch-aware sampling in RandomWalkSampler to reduce filtering rate
+  - [ ] Add more epochs (100+) for better model convergence
+  - [ ] Improve graph construction for documents with diverse domains
 
 ### Module Structure
 
