@@ -46,7 +46,7 @@ class RandomWalkSampler:
     def __init__(
         self,
         edge_index: Tensor,
-        num_nodes: int,
+        num_nodes: int = None,
         batch_size: int = 32,
         walk_length: int = 5,
         context_size: int = 2,
@@ -55,7 +55,9 @@ class RandomWalkSampler:
         q: float = 1.0,  # In-out parameter (like Node2Vec)
         num_negative_samples: int = 1,
         directed: bool = False,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        use_batch_aware_sampling: bool = False,
+        device: Optional[str] = None
     ) -> None:
         """
         Initialize the random walk sampler.
@@ -83,6 +85,8 @@ class RandomWalkSampler:
         self.q = q
         self.num_negative_samples = num_negative_samples
         self.directed = directed
+        self.device = device if device is not None else 'cpu'
+        self.use_batch_aware_sampling = use_batch_aware_sampling
         
         # Set up CSR representation for fast random walks
         self._setup_csr_format()

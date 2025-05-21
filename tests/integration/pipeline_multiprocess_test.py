@@ -639,11 +639,13 @@ class PipelineMultiprocessTester:
                 "walks_per_node": 10,     # Number of walks per starting node
                 "p": 1.0,                # Return parameter in Node2Vec terminology
                 "q": 0.7,                # In-out parameter in Node2Vec terminology
-                "num_negative_samples": 1 # Ratio of negative to positive samples
+                "num_negative_samples": 1, # Ratio of negative to positive samples
+                # Enable batch-aware sampling by setting flag (will be detected by trainer)
+                "use_batch_aware_sampling": True  # This will dramatically reduce filtering
             }
         }
         
-        logger.info(f"Using RandomWalkSampler for improved pair generation")
+        logger.info(f"Using RandomWalkSampler with batch-aware sampling for reduced filtering rate")
             
         # Create the orchestrator with in-memory documents and improved sampler
         orchestrator = ISNETrainingOrchestrator(

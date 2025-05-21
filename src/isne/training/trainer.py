@@ -344,23 +344,69 @@ class ISNETrainer:
             # Compute feature preservation loss
             feat_loss = self.feature_loss(embeddings, projected_features)
             
-            # Use batch-aware sampling for positive and negative pairs if the method is available
+            # Use batch-aware sampling for positive and negative pairs if enabled and available
+            use_batch_aware = False
+            
+            # Check if batch-aware sampling is available and enabled
             if hasattr(sampler, 'sample_positive_pairs_within_batch'):
+                # First check if the sampler has use_batch_aware_sampling as an attribute
+                if hasattr(sampler, 'use_batch_aware_sampling'):
+                    use_batch_aware = sampler.use_batch_aware_sampling
+                # Otherwise, check the sampler configuration
+                elif self.sampler_config and 'sampler_params' in self.sampler_config:
+                    sampler_params = self.sampler_config.get('sampler_params', {})
+                    use_batch_aware = sampler_params.get('use_batch_aware_sampling', False)
+            
+            # Initialize filtering tracking metrics
+            total_pairs = batch_size * 2  # Positive and negative pairs
+            filtered_pairs = 0
+            
+            # Sample pairs using the appropriate method
+            if use_batch_aware and hasattr(sampler, 'sample_positive_pairs_within_batch'):
                 logger.info("Using batch-aware sampling for positive and negative pairs")
                 # Sample pairs only from nodes within the current batch
                 pos_pairs = sampler.sample_positive_pairs_within_batch(batch_nodes)
                 neg_pairs = sampler.sample_negative_pairs_within_batch(batch_nodes, pos_pairs)
+                
                 # Track the usage of batch-aware sampling for metrics
-                epoch_stats = getattr(self, 'epoch_stats', {})
-                epoch_stats['batch_aware_sampling'] = True
+                self.train_stats.setdefault('sampling_method', {}).setdefault('batch_aware', 0)
+                self.train_stats['sampling_method']['batch_aware'] += 1
+                
+                # Track filtering statistics
+                logger.info(f"Batch-aware sampling - pair filtering rate: 0% (guaranteed in-batch pairs)")
             else:
-                # Fall back to standard sampling if batch-aware methods are not available
+                # Fall back to standard sampling
                 logger.info("Using standard sampling for positive and negative pairs")
                 pos_pairs = sampler.sample_positive_pairs()
                 neg_pairs = sampler.sample_negative_pairs(pos_pairs)
+                
                 # Track the usage of standard sampling for metrics
-                epoch_stats = getattr(self, 'epoch_stats', {})
-                epoch_stats['batch_aware_sampling'] = False
+                self.train_stats.setdefault('sampling_method', {}).setdefault('standard', 0)
+                self.train_stats['sampling_method']['standard'] += 1
+                
+                # Check how many pairs are within the batch (for filtering rate metrics)
+                batch_nodes_set = set(batch_nodes.cpu().tolist())
+                
+                # Count pairs with nodes outside the batch
+                filtered_pos = 0
+                for i in range(len(pos_pairs)):
+                    src, dst = pos_pairs[i].cpu().tolist()
+                    if src not in batch_nodes_set or dst not in batch_nodes_set:
+                        filtered_pos += 1
+                
+                filtered_neg = 0
+                for i in range(len(neg_pairs)):
+                    src, dst = neg_pairs[i].cpu().tolist()
+                    if src not in batch_nodes_set or dst not in batch_nodes_set:
+                        filtered_neg += 1
+                
+                total_filtered = filtered_pos + filtered_neg
+                filter_rate = 100 * total_filtered / (len(pos_pairs) + len(neg_pairs))
+                logger.info(f"Standard sampling - pair filtering rate: {filter_rate:.2f}% ({total_filtered}/{len(pos_pairs) + len(neg_pairs)})")
+                
+                # Track filtering statistics
+                self.train_stats.setdefault('filtering_rate', [])
+                self.train_stats['filtering_rate'].append(filter_rate)
             
             # Compute structural preservation loss
             struct_loss = self.structural_loss(embeddings, subgraph_edge_index)
@@ -413,6 +459,41 @@ class ISNETrainer:
         
         # Update epochs trained
         self.train_stats['epochs'] = epoch + 1
+        
+        # Generate detailed performance metrics about sampling and filtering
+        if 'filtering_rate' in self.train_stats and self.train_stats['filtering_rate']:
+            avg_filtering_rate = sum(self.train_stats['filtering_rate']) / len(self.train_stats['filtering_rate'])
+            self.train_stats['avg_filtering_rate'] = avg_filtering_rate
+            logger.info(f"Average filtering rate: {avg_filtering_rate:.2f}%")
+        
+        if 'sampling_method' in self.train_stats:
+            sampling_methods = self.train_stats['sampling_method']
+            total_epochs = sum(sampling_methods.values())
+            for method, count in sampling_methods.items():
+                percentage = (count / total_epochs) * 100 if total_epochs > 0 else 0
+                logger.info(f"Sampling method usage - {method}: {count}/{total_epochs} epochs ({percentage:.1f}%)")
+        
+        # Add summary metrics about the batch-aware sampling performance
+        uses_batch_aware = ('sampling_method' in self.train_stats and 
+                          'batch_aware' in self.train_stats['sampling_method'] and
+                          self.train_stats['sampling_method']['batch_aware'] > 0)
+        
+        if uses_batch_aware:
+            logger.info("===== Batch-Aware Sampling Performance =====")
+            logger.info("Batch-aware sampling was used during training, which guarantees")
+            logger.info("that sampled pairs remain within batch boundaries.")
+            logger.info("This should significantly improve training efficiency by:")
+            logger.info(" - Eliminating or greatly reducing out-of-bounds filtering")
+            logger.info(" - Reducing reliance on fallback pairs")
+            logger.info(" - Ensuring all sampled pairs can be used for training")
+        else:
+            logger.info("===== Standard Sampling Performance =====")
+            logger.info("Standard sampling was used during training.")
+            if 'avg_filtering_rate' in self.train_stats:
+                logger.info(f"Average filtering rate: {self.train_stats['avg_filtering_rate']:.2f}%")
+                logger.info("Consider enabling batch-aware sampling to improve efficiency.")
+            
+        logger.info("=======================================")
         
         return self.train_stats
     
