@@ -5,6 +5,7 @@ This module implements the trainer for the ISNE model, orchestrating the
 training process including loss computation, optimization, and evaluation.
 """
 
+import time
 from typing import Dict, List, Optional, Union, Any, Tuple, Callable
 import torch
 import torch.nn as nn
@@ -357,23 +358,101 @@ class ISNETrainer:
                     sampler_params = self.sampler_config.get('sampler_params', {})
                     use_batch_aware = sampler_params.get('use_batch_aware_sampling', False)
             
-            # Initialize filtering tracking metrics
+            # Initialize filtering and tracking metrics
             total_pairs = batch_size * 2  # Positive and negative pairs
-            filtered_pairs = 0
+            batch_metrics = {
+                'total_pairs': 0,
+                'within_batch_pairs': 0,
+                'fallback_pairs': 0,
+                'filtered_pairs': 0,
+                'pos_within_batch': 0,
+                'pos_fallback': 0,
+                'neg_within_batch': 0,
+                'neg_fallback': 0
+            }
             
             # Sample pairs using the appropriate method
             if use_batch_aware and hasattr(sampler, 'sample_positive_pairs_within_batch'):
                 logger.info("Using batch-aware sampling for positive and negative pairs")
                 # Sample pairs only from nodes within the current batch
+                pos_start_time = time.time()
                 pos_pairs = sampler.sample_positive_pairs_within_batch(batch_nodes)
+                pos_time = time.time() - pos_start_time
+                
+                neg_start_time = time.time()
                 neg_pairs = sampler.sample_negative_pairs_within_batch(batch_nodes, pos_pairs)
+                neg_time = time.time() - neg_start_time
                 
                 # Track the usage of batch-aware sampling for metrics
                 self.train_stats.setdefault('sampling_method', {}).setdefault('batch_aware', 0)
                 self.train_stats['sampling_method']['batch_aware'] += 1
                 
-                # Track filtering statistics
-                logger.info(f"Batch-aware sampling - pair filtering rate: 0% (guaranteed in-batch pairs)")
+                # For batch-aware sampling, check if any fallback pairs were generated
+                # (The sampler may have had to fall back to some non-batch pairs if not enough were found)
+                batch_nodes_set = set(batch_nodes.cpu().tolist())
+                
+                # Count positive pairs with possible fallback
+                for i in range(len(pos_pairs)):
+                    src, dst = pos_pairs[i].cpu().tolist()
+                    if src in batch_nodes_set and dst in batch_nodes_set:
+                        batch_metrics['pos_within_batch'] += 1
+                    else:
+                        batch_metrics['pos_fallback'] += 1
+                
+                # Count negative pairs with possible fallback
+                for i in range(len(neg_pairs)):
+                    src, dst = neg_pairs[i].cpu().tolist()
+                    if src in batch_nodes_set and dst in batch_nodes_set:
+                        batch_metrics['neg_within_batch'] += 1
+                    else:
+                        batch_metrics['neg_fallback'] += 1
+                
+                # Update overall metrics
+                batch_metrics['total_pairs'] = len(pos_pairs) + len(neg_pairs)
+                batch_metrics['within_batch_pairs'] = batch_metrics['pos_within_batch'] + batch_metrics['neg_within_batch']
+                batch_metrics['fallback_pairs'] = batch_metrics['pos_fallback'] + batch_metrics['neg_fallback']
+                
+                # Calculate metrics for logging
+                if batch_metrics['total_pairs'] > 0:
+                    within_batch_rate = 100 * batch_metrics['within_batch_pairs'] / batch_metrics['total_pairs']
+                    fallback_rate = 100 * batch_metrics['fallback_pairs'] / batch_metrics['total_pairs']
+                else:
+                    within_batch_rate = 0
+                    fallback_rate = 0
+                
+                # Log detailed metrics
+                logger.info(f"Batch-aware sampling metrics:")
+                logger.info(f"  - Within-batch pairs: {batch_metrics['within_batch_pairs']}/{batch_metrics['total_pairs']} ({within_batch_rate:.2f}%)")
+                logger.info(f"  - Fallback pairs: {batch_metrics['fallback_pairs']}/{batch_metrics['total_pairs']} ({fallback_rate:.2f}%)")
+                logger.info(f"  - Positive pairs: {batch_metrics['pos_within_batch']} in-batch, {batch_metrics['pos_fallback']} fallback")
+                logger.info(f"  - Negative pairs: {batch_metrics['neg_within_batch']} in-batch, {batch_metrics['neg_fallback']} fallback")
+                logger.info(f"  - Sampling time: {pos_time:.4f}s for positive, {neg_time:.4f}s for negative")
+                
+                # Update tracking statistics
+                self.train_stats.setdefault('batch_aware_metrics', {})
+                
+                # Initialize on first batch
+                if 'within_batch_rate' not in self.train_stats['batch_aware_metrics']:
+                    self.train_stats['batch_aware_metrics'] = {
+                        'within_batch_rate': [],
+                        'fallback_rate': [],
+                        'pos_within_batch': [],
+                        'pos_fallback': [],
+                        'neg_within_batch': [],
+                        'neg_fallback': [],
+                        'pos_sampling_time': [],
+                        'neg_sampling_time': []
+                    }
+                
+                # Append current batch metrics
+                self.train_stats['batch_aware_metrics']['within_batch_rate'].append(within_batch_rate)
+                self.train_stats['batch_aware_metrics']['fallback_rate'].append(fallback_rate)
+                self.train_stats['batch_aware_metrics']['pos_within_batch'].append(batch_metrics['pos_within_batch'])
+                self.train_stats['batch_aware_metrics']['pos_fallback'].append(batch_metrics['pos_fallback'])
+                self.train_stats['batch_aware_metrics']['neg_within_batch'].append(batch_metrics['neg_within_batch'])
+                self.train_stats['batch_aware_metrics']['neg_fallback'].append(batch_metrics['neg_fallback'])
+                self.train_stats['batch_aware_metrics']['pos_sampling_time'].append(pos_time)
+                self.train_stats['batch_aware_metrics']['neg_sampling_time'].append(neg_time)
             else:
                 # Fall back to standard sampling
                 logger.info("Using standard sampling for positive and negative pairs")
@@ -480,12 +559,55 @@ class ISNETrainer:
         
         if uses_batch_aware:
             logger.info("===== Batch-Aware Sampling Performance =====")
-            logger.info("Batch-aware sampling was used during training, which guarantees")
-            logger.info("that sampled pairs remain within batch boundaries.")
-            logger.info("This should significantly improve training efficiency by:")
-            logger.info(" - Eliminating or greatly reducing out-of-bounds filtering")
-            logger.info(" - Reducing reliance on fallback pairs")
-            logger.info(" - Ensuring all sampled pairs can be used for training")
+            
+            # Calculate summaries from detailed metrics if available
+            if 'batch_aware_metrics' in self.train_stats:
+                metrics = self.train_stats['batch_aware_metrics']
+                
+                # Calculate averages
+                avg_within_batch_rate = sum(metrics['within_batch_rate']) / len(metrics['within_batch_rate']) \
+                    if metrics['within_batch_rate'] else 0
+                avg_fallback_rate = sum(metrics['fallback_rate']) / len(metrics['fallback_rate']) \
+                    if metrics['fallback_rate'] else 0
+                total_pos_within = sum(metrics['pos_within_batch'])
+                total_pos_fallback = sum(metrics['pos_fallback'])
+                total_neg_within = sum(metrics['neg_within_batch'])
+                total_neg_fallback = sum(metrics['neg_fallback'])
+                total_pairs = total_pos_within + total_pos_fallback + total_neg_within + total_neg_fallback
+                
+                # Add the summary to train_stats
+                self.train_stats['batch_aware_summary'] = {
+                    'avg_within_batch_rate': avg_within_batch_rate,
+                    'avg_fallback_rate': avg_fallback_rate,
+                    'total_positive_pairs': {
+                        'within_batch': total_pos_within,
+                        'fallback': total_pos_fallback
+                    },
+                    'total_negative_pairs': {
+                        'within_batch': total_neg_within,
+                        'fallback': total_neg_fallback
+                    },
+                    'efficiency': {
+                        'within_batch_percentage': 100 * (total_pos_within + total_neg_within) / total_pairs 
+                        if total_pairs > 0 else 0
+                    }
+                }
+                
+                # Log detailed performance metrics
+                logger.info(f"Batch-aware sampling was used during training with:")
+                logger.info(f"  - Average within-batch pair rate: {avg_within_batch_rate:.2f}%")
+                logger.info(f"  - Average fallback pair rate: {avg_fallback_rate:.2f}%")
+                logger.info(f"  - Total positive pairs: {total_pos_within} in-batch, {total_pos_fallback} fallback")
+                logger.info(f"  - Total negative pairs: {total_neg_within} in-batch, {total_neg_fallback} fallback")
+                logger.info(f"  - Overall efficiency: {self.train_stats['batch_aware_summary']['efficiency']['within_batch_percentage']:.2f}% pairs within batch")
+            else:
+                # Basic metrics if detailed tracking wasn't available
+                logger.info("Batch-aware sampling was used during training, which guarantees")
+                logger.info("that sampled pairs remain within batch boundaries.")
+                logger.info("This should significantly improve training efficiency by:")
+                logger.info(" - Eliminating or greatly reducing out-of-bounds filtering")
+                logger.info(" - Reducing reliance on fallback pairs")
+                logger.info(" - Ensuring all sampled pairs can be used for training")
         else:
             logger.info("===== Standard Sampling Performance =====")
             logger.info("Standard sampling was used during training.")
