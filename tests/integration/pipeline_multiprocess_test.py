@@ -369,19 +369,36 @@ class PipelineMultiprocessTester:
         }
     
     def find_supported_files(self) -> List[Path]:
-        """Find all supported file types in the test directory."""
+        """Find all supported file types recursively in the test directory and subdirectories."""
         supported_files = []
         
         # Use EXTENSION_TO_FORMAT to find all supported file types
         for extension in EXTENSION_TO_FORMAT.keys():
-            # Remove the leading dot for the glob pattern
-            pattern = f"*{extension}"
+            # Remove the leading dot for the glob pattern, use ** for recursive search
+            pattern = f"**/*{extension}"
             files = list(self.test_data_dir.glob(pattern))
             supported_files.extend(files)
             
             # Log the file types found
             if files:
                 logger.info(f"Found {len(files)} {extension} files")
+                
+        # Group files by directory
+        files_by_dir = {}
+        for file in supported_files:
+            parent_dir = file.parent
+            rel_path = parent_dir.relative_to(self.test_data_dir)
+            if rel_path not in files_by_dir:
+                files_by_dir[rel_path] = []
+            files_by_dir[rel_path].append(file)
+            
+        for dir_path, dir_files in files_by_dir.items():
+            if str(dir_path) == '.':
+                logger.info(f"Found {len(dir_files)} files in root directory")
+            else:
+                logger.info(f"Found {len(dir_files)} files in subdirectory {dir_path}")
+                
+        self.directory_structure = files_by_dir  # Store for relationship building later
         
         # Sort files to ensure consistent order
         supported_files = sorted(supported_files, key=lambda x: str(x))
@@ -450,33 +467,52 @@ class PipelineMultiprocessTester:
         stats_time = time.time() - stats_start
         
         # Save the results
-        save_start = time.time()
+        # Save statistics to output file
         output_file = self.output_dir / "pipeline_stats.json"
+        save_start = time.time()
         with open(output_file, "w") as f:
             json.dump(self.stats, f, indent=2)
         
         # Save all processed documents for inspection
         sample_output = self.output_dir / "isne_input_sample.json"
         with open(sample_output, "w") as f:
-            # Include all processed documents
-            sample_data = []
-            for result in results:
-                if "file_id" in result:
-                    # Create a simplified sample without large embedding vectors
-                    sample_item = {
-                        "file_id": result["file_id"],
-                        "file_name": result["file_name"],
-                        "chunk_count": len(result.get("chunks", [])),
-                        "embedding_count": len(result.get("embeddings", [])),
-                        "chunks": result.get("chunks", [])
-                    }
-                    sample_data.append(sample_item)
-            json.dump(sample_data, f, indent=2)
+            # Save a sample of the processed documents (first 5 or fewer)
+            sample_docs = results[:min(5, len(results))]
+            json.dump(sample_docs, f, indent=2)
         
         logger.info(f"Saved statistics to {output_file}")
         logger.info(f"Saved sample ISNE input to {sample_output}")
         save_time = time.time() - save_start
         
+        # Store processing time data for report later
+        self.processing_stats = {
+            "file_discovery_time": file_discovery_time,
+            "parallel_time": parallel_time,
+            "stats_time": stats_time,
+            "save_time": save_time,
+            "test_start_time": test_start_time,
+            "results": results,
+            "total_runtime": time.time() - test_start_time
+        }
+        
+        # Log brief processing completion
+        logger.info("Pipeline document processing completed successfully")
+        logger.info(f"Processed {self.stats['total_files']} files with {self.stats['total_chunks']} chunks")
+        if "total_embeddings" in self.stats:
+            logger.info(f"Generated {self.stats['total_embeddings']} embeddings")
+            
+        # Optional: Run ISNE training directly with in-memory data if requested
+        isne_results = None
+        if run_isne_training:
+            logger.info("\n=== Starting In-Memory ISNE Training ===")
+            isne_results = self.direct_train_isne(results)
+            
+        # Now generate the complete performance report after all processing is done
+        self._generate_performance_report(run_isne_training)
+        
+        return isne_results
+        
+    def _generate_performance_report(self, run_isne_training):
         # Calculate average processing times
         if self.stats["total_files"] > 0:
             avg_doc_time = self.stats["processing_time"]["document_processing"] / self.stats["total_files"]
@@ -486,25 +522,32 @@ class PipelineMultiprocessTester:
             avg_doc_time = avg_chunk_time = avg_embed_time = 0
         
         # Calculate throughput
-        total_runtime = time.time() - test_start_time
+        total_runtime = time.time() - self.processing_stats["test_start_time"]
         files_per_second = self.stats["total_files"] / total_runtime if total_runtime > 0 else 0
         chunks_per_second = self.stats["total_chunks"] / total_runtime if total_runtime > 0 else 0
         
         # Calculate parallelization efficiency
         theoretical_speedup = self.max_workers
-        sequential_runtime = sum(r["timing"].get("total", 0) for r in results if "timing" in r)
-        actual_speedup = sequential_runtime / parallel_time if parallel_time > 0 else 0
+        sequential_runtime = sum(r["timing"].get("total", 0) for r in self.processing_stats["results"] if "timing" in r)
+        actual_speedup = sequential_runtime / self.processing_stats["parallel_time"] if self.processing_stats["parallel_time"] > 0 else 0
         efficiency = actual_speedup / theoretical_speedup if theoretical_speedup > 0 else 0
         
         # Performance report
         logger.info("\n=== Performance Report ===")
         logger.info("\nTiming Breakdown:")
         logger.info(f"  Setup:                0.00s")
-        logger.info(f"  File Discovery:       {file_discovery_time:.2f}s")
-        logger.info(f"  Parallel Processing:  {parallel_time:.2f}s")
-        logger.info(f"  Statistics Update:    {stats_time:.2f}s")
-        logger.info(f"  Results Saving:       {save_time:.2f}s")
-        logger.info(f"  Total Runtime:        {total_runtime:.2f}s")
+        logger.info(f"  File Discovery:       {self.processing_stats['file_discovery_time']:.2f}s")
+        logger.info(f"  Parallel Processing:  {self.processing_stats['parallel_time']:.2f}s")
+        logger.info(f"  Statistics Update:    {self.processing_stats['stats_time']:.2f}s")
+        logger.info(f"  Results Saving:       {self.processing_stats['save_time']:.2f}s")
+        
+        # Add ISNE training time if run
+        isne_time = 0.0
+        if run_isne_training and hasattr(self, 'isne_training_time'):
+            isne_time = self.isne_training_time
+            logger.info(f"  ISNE Training:        {isne_time:.2f}s")
+            
+        logger.info(f"  Total Runtime:        {total_runtime + isne_time:.2f}s")
         
         logger.info("\nAverage Processing Times:")
         logger.info(f"  Document Processing:  {avg_doc_time:.2f}s per file")
@@ -522,23 +565,31 @@ class PipelineMultiprocessTester:
         
         logger.info("\nPipeline Test Completed Successfully!")
         logger.info(f"  - Processed {self.stats['total_files']} files with {self.stats['total_chunks']} chunks")
-        logger.info(f"  - Generated {self.stats['total_embeddings']} embeddings with dimension {self.config.get('embedding', {}).get('dimension', 'unknown')}")
+        if "total_embeddings" in self.stats:
+            logger.info(f"  - Generated {self.stats['total_embeddings']} embeddings with dimension unknown")
         logger.info(f"  - Saved results to {self.output_dir}")
         
-        # Optional: Run ISNE training directly with in-memory data if requested
-        if run_isne_training:
-            logger.info("\n=== Starting In-Memory ISNE Training ===")
-            try:
-                # Run the direct ISNE training with the documents we already have in memory
-                isne_results = self.direct_train_isne(results)
-                logger.info(f"ISNE Training Completed Successfully!")
-                logger.info(f"  - Trained model saved to {Path('./models/isne')}")
-                # Add ISNE results to our stats
-                self.stats["isne_training"] = isne_results
-            except Exception as e:
-                logger.error(f"Error during in-memory ISNE training: {str(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
+        # Add ISNE training details if run
+        if run_isne_training and hasattr(self, 'isne_training_time'):
+            # Get training results if available
+            isne_results = getattr(self, 'isne_results', None)
+            if isne_results and 'training_metrics' in isne_results:
+                metrics = isne_results['training_metrics']
+                logger.info("\nISNE Training Results:")
+                logger.info(f"  - Graph size: {metrics.get('graph_nodes', 0)} nodes, {metrics.get('graph_edges', 0)} edges")
+                logger.info(f"  - Training time: {self.isne_training_time:.2f}s")
+                logger.info(f"  - Epochs completed: {metrics.get('epochs', 0)}")
+                logger.info(f"  - Final loss: {metrics.get('final_loss', 0):.4f}")
+                logger.info(f"  - Device used: {metrics.get('device', 'unknown')}")
+                if 'embedding_dim' in metrics and 'output_dim' in metrics:
+                    logger.info(f"  - Dimensions: {metrics.get('embedding_dim', 0)} → {metrics.get('output_dim', 0)}")
+            else:
+                logger.info("\nISNE Training Completed")
+                logger.info(f"  - Training time: {self.isne_training_time:.2f}s")
+        
+        # Write full performance report to file for later analysis
+        report_file = self.output_dir / "performance_report.txt"
+        # TODO: Write detailed performance metrics to file
         
         return self.stats
     
@@ -557,6 +608,7 @@ class PipelineMultiprocessTester:
             Training results from the ISNE training orchestrator
         """
         from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
+        from src.isne.training.random_walk_sampler import RandomWalkSampler
         
         logger.info("Demonstrating direct in-memory handoff to ISNE training...")
         
@@ -569,19 +621,49 @@ class PipelineMultiprocessTester:
         
         logger.info(f"Passing {len(documents)} documents directly to ISNE training orchestrator")
         
-        # Create the orchestrator with in-memory documents
+        # Determine device from configuration
+        device = "cpu"  # Default fallback
+        if self.config.get("gpu_execution", {}).get("enabled", False):
+            device = self.config["gpu_execution"]["isne"]["device"]
+            logger.info(f"Using GPU for ISNE training: {device}")
+        elif self.config.get("cpu_execution", {}).get("enabled", False):
+            device = "cpu"
+            logger.info(f"Using CPU for ISNE training")
+        
+        # Create advanced sampler configuration
+        sampler_config = {
+            "sampler_class": RandomWalkSampler,
+            "sampler_params": {
+                "walk_length": 6,        # Length of random walks for positive pair sampling
+                "context_size": 4,        # Context window size for positive pairs
+                "walks_per_node": 10,     # Number of walks per starting node
+                "p": 1.0,                # Return parameter in Node2Vec terminology
+                "q": 0.7,                # In-out parameter in Node2Vec terminology
+                "num_negative_samples": 1 # Ratio of negative to positive samples
+            }
+        }
+        
+        logger.info(f"Using RandomWalkSampler for improved pair generation")
+            
+        # Create the orchestrator with in-memory documents and improved sampler
         orchestrator = ISNETrainingOrchestrator(
             documents=documents,  # Pass documents directly in memory
             output_dir=self.output_dir / "isne-training",
             model_output_dir=Path("./models/isne"),
-            device="cpu"  # Use CPU as per user preference for now
+            device=device,  # Use device from configuration
+            sampler_config=sampler_config  # Use our improved sampler implementation
         )
         
-        # Run training
+        # Run training with timing
         logger.info("Starting ISNE training with in-memory documents...")
+        isne_start_time = time.time()
         training_results = orchestrator.train()
+        isne_end_time = time.time()
+        self.isne_training_time = isne_end_time - isne_start_time
+        logger.info(f"ISNE training completed in {self.isne_training_time:.2f} seconds")
         
-        # Return training results
+        # Store and return training results
+        self.isne_results = training_results
         return training_results
 
 # Initialize multiprocessing

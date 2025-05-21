@@ -312,6 +312,62 @@ def get_model_engine() -> Optional[HaystackModelEngine]:
         return None
 
 
+def _get_adjusted_device(device: str) -> str:  # pragma: no cover
+    """Adjust the requested device string to match the runtime environment.
+
+    When ``CUDA_VISIBLE_DEVICES`` is set, the indices of visible GPUs are
+    remapped such that the first visible GPU becomes ``cuda:0`` regardless of
+    its original physical index.  Requesting the original index would raise a
+    *invalid device ordinal* error.  This helper ensures that an out-of-range
+    CUDA device is mapped to the highest available visible device or, if no
+    GPUs are visible, falls back to CPU.
+
+    The logic mirrors ``ModernBERTEmbeddingAdapter._get_adjusted_device`` so
+    that all components follow the same rules.
+
+    Args:
+        device: The originally requested device string (e.g. ``"cuda:1"``).
+
+    Returns:
+        A device string that is safe to use with PyTorch in the current
+        process.
+    """
+    if not device.startswith("cuda"):
+        # Covers both "cpu" and other possible values like "mps"
+        return device
+
+    try:
+        import torch  # Local import to avoid mandatory dependency when GPU not used
+
+        visible_count = torch.cuda.device_count()
+        if visible_count == 0:
+            logger.warning("No CUDA devices visible. Falling back to CPU.")
+            return "cpu"
+
+        # Extract requested index (defaults to 0 if just "cuda")
+        requested_idx = 0
+        if ":" in device:
+            try:
+                requested_idx = int(device.split(":")[1])
+            except ValueError:
+                logger.warning(f"Unable to parse CUDA device index from '{device}'. Using cuda:0 instead.")
+                requested_idx = 0
+
+        if requested_idx >= visible_count:
+            logger.warning(
+                f"Requested device {device} is not available under current CUDA_VISIBLE_DEVICES setting. "
+                f"Only {visible_count} device(s) visible. Using cuda:{visible_count - 1} instead."
+            )
+            return f"cuda:{visible_count - 1}"
+
+        # Requested index is within visible range
+        return f"cuda:{requested_idx}"
+
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"Could not validate CUDA device availability: {e}. Falling back to original device '{device}'.")
+        return device
+
+
 def _get_splitter_with_engine(model_id: str, device: str = "cuda") -> ParagraphSplitter:
     """Get a Chonky ParagraphSplitter using the Haystack model engine.
     
@@ -344,6 +400,10 @@ def _get_splitter_with_engine(model_id: str, device: str = "cuda") -> ParagraphS
     except Exception as e:
         logger.warning(f"Could not load pipeline config for device settings: {e}")
         # Continue with provided or default device
+    
+    # Adjust device to match runtime environment
+    device = _get_adjusted_device(device)
+    
     global _SPLITTER_CACHE
     
     # Check if we have a cached splitter for this model
@@ -522,6 +582,9 @@ def chunk_text(
     else:
         logger.info(f"Using explicitly provided device: {device}")
         
+    # Adjust device to match runtime environment
+    device = _get_adjusted_device(device)
+    
     logger.info(f"Using device: {device}")
     
     # Get the configured max tokens or use the provided value

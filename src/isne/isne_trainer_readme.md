@@ -11,7 +11,10 @@ The ISNE Trainer Module provides a complete implementation for training the Indu
 The primary class responsible for coordinating the end-to-end ISNE training workflow:
 
 - **Input Processing**: Takes processed documents with ModernBERT embeddings from the document processing pipeline
-- **Graph Construction**: Builds a document graph from the embeddings and document relationships
+- **Graph Construction**: Builds a document graph from the embeddings and multiple types of relationships:
+  - Sequential proximity within documents
+  - Directory-based relationships (documents in the same directory)
+  - Semantic similarity between chunks
 - **ISNE Model Training**: Trains the ISNE model on the constructed graph
 - **Model Evaluation**: Evaluates the trained model using appropriate metrics
 - **Model Persistence**: Saves trained models for later use in inference
@@ -21,8 +24,11 @@ The primary class responsible for coordinating the end-to-end ISNE training work
 Extends the existing pipeline configuration system to include ISNE training parameters:
 
 - **Training Parameters**: Epochs, learning rate, batch size, model architecture settings
-- **Resource Allocation**: CPU/GPU usage settings, aligned with the document processing pipeline
-- **File Handling**: Input/output directory configurations
+- **Resource Allocation**: CPU/GPU usage settings with dynamic device selection
+  - Configurable device selection (e.g., 'cuda:0', 'cuda:1', 'cpu')
+  - Memory optimization settings to prevent CUDA out-of-memory errors
+- **File Handling**: Input/output directory configurations with support for nested directory structures
+- **Chunking Parameters**: Optimized for ModernBERT token limits (max_tokens_per_chunk = 4096)
 
 ### Workflow Integration
 
@@ -89,7 +95,8 @@ The trainer converts document chunks and their relationships into a PyTorch Geom
 
 1. **Node Features**: Document chunk embeddings from ModernBERT
 2. **Edge Construction**: Relationships between chunks based on:
-   - Sequential proximity within documents
+   - Sequential proximity within documents (chunks that follow each other)
+   - Directory structure relationships (documents in the same folder)
    - Semantic similarity between chunks
    - Explicit relationships like citations or references
 
@@ -112,13 +119,25 @@ The trainer evaluates model performance using:
 - **Link Prediction**: Ability to predict connections between documents
 - **Ablation Studies**: Measuring contribution of different loss components
 
-## Benchmarks
+## Performance Reporting
 
-The module includes performance benchmarks for:
+The module includes comprehensive performance reporting for the complete pipeline:
 
-- **Training Time**: Measurement of training duration across different document set sizes
-- **Embedding Quality**: Comparison of ISNE-enhanced embeddings vs. original embeddings
-- **Memory Usage**: Profiling of memory requirements during training
+- **Document Processing Statistics**:
+  - Processing time for each stage (extraction, chunking, embedding)
+  - Number of documents and chunks processed
+  - Total tokens processed
+  
+- **ISNE Training Statistics**:
+  - Training time and epochs
+  - Loss values and convergence metrics
+  - Memory usage during training
+  - GPU utilization metrics
+
+- **Benchmarks**:
+  - Training time across different document set sizes
+  - Embedding quality comparison (ISNE-enhanced vs. original)
+  - Memory usage profiling during training
 
 ## Testing
 
@@ -128,6 +147,26 @@ Following the project's standard protocol, this module includes comprehensive te
 - **Integration Tests**: End-to-end tests with real document examples
 - **Performance Tests**: Measurement of training efficiency
 
+## Implementation Notes
+
+### Directory Traversal
+
+The system supports recursive directory traversal to locate documents:
+
+- All supported document formats are discovered in nested subdirectories
+- The directory structure is incorporated into the ISNE graph construction
+- Documents in the same directory receive additional edge connections
+- Configurable directory relationship weight (default: 0.5)
+
+### GPU Optimization
+
+The system includes several optimizations for GPU processing:
+
+- Dynamic device selection based on configuration
+- Reduced embedding batch size (default: 4) to prevent CUDA out-of-memory errors
+- Optimized token limits for ModernBERT (max_tokens_per_chunk: 4096)
+- Proper memory management during embedding generation
+
 ## Future Improvements
 
 Planned enhancements for this module include:
@@ -136,3 +175,4 @@ Planned enhancements for this module include:
 2. **Dynamic Graph Updates**: Incremental training for evolving document collections
 3. **Advanced Relationship Extraction**: More sophisticated methods for identifying document relationships
 4. **Hyperparameter Optimization**: Automated tuning of model parameters
+5. **Further GPU Optimizations**: Additional memory management strategies for larger document collections

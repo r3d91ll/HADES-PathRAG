@@ -21,12 +21,12 @@ gpu_execution:
     device: "cuda:0"
     batch_size: 8
   embedding:
-    device: "cuda:0"
-    batch_size: 8
+    device: "cuda:1"
+    batch_size: 4  # Reduced from 8 to lower memory usage with multiple workers
     model_precision: "float16"  # Options: float32, float16, bfloat16
   isne:
-    device: "cuda:0"
-    batch_size: 32
+    device: "cuda:1"
+    batch_size: 64
     model_precision: "float32"  # ISNE typically works better with float32
 
 cpu_execution:
@@ -42,7 +42,7 @@ cpu_execution:
     num_threads: 8
   isne:
     device: "cpu"
-    num_threads: 4
+    num_threads: 8
 
 # Worker thread pools
 workers:
@@ -96,7 +96,7 @@ monitoring:
 limits:
   max_documents: null      # null = no limit
   max_chunks_per_document: null
-  max_tokens_per_chunk: 2048
+  max_tokens_per_chunk: 4096  # Max set to 4096 to stay safely under ModernBERT's 8192 token limit
 
 # ISNE (Inductive Shallow Node Embedding) configuration
 isne:
@@ -136,6 +136,7 @@ isne:
     sequential_weight: 0.9   # Edge weight for sequential connections
     similarity_weight: 0.7   # Base weight for similarity-based connections
     window_size: 3           # Window size for sequential context connections
+    directory_relationship_weight: 0.5  # Weight for relationships between documents in the same directory
 
   # Directory configuration
   directories:

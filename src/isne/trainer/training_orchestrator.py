@@ -79,7 +79,8 @@ class ISNETrainingOrchestrator:
         output_dir: Optional[Union[str, Path]] = None,
         model_output_dir: Optional[Union[str, Path]] = None,
         config_override: Optional[Dict[str, Any]] = None,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        sampler_config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the ISNE training orchestrator.
@@ -95,9 +96,13 @@ class ISNETrainingOrchestrator:
                               If None, uses the directory from config.
             config_override: Optional dictionary to override default configuration settings
             device: Training device (e.g., "cpu", "cuda:0"); if None, uses config setting
+            sampler_config: Optional configuration for the sampler class to use during training.
+                          Format: {"sampler_class": Class, "sampler_params": Dict[str, Any]}
         """
         # Store the documents passed directly in memory
         self.processed_documents = documents
+        # Store custom sampler configuration if provided
+        self.sampler_config = sampler_config
         # Load configuration first so we can use directory defaults
         self.config = self._load_config()
         
@@ -442,23 +447,106 @@ class ISNETrainingOrchestrator:
         if not node_features:
             raise ValueError("No valid chunks with embeddings found in processed documents")
         
+        # Log node count for debugging
+        logger.info(f"Graph construction: collected {len(node_features)} nodes with embeddings")
+        
+        # Check for dimension consistency before stacking
+        dim_counts = {}
+        for i, feat in enumerate(node_features):
+            dim = feat.shape[0] if hasattr(feat, 'shape') else len(feat)
+            if dim not in dim_counts:
+                dim_counts[dim] = 0
+            dim_counts[dim] += 1
+                
+        if len(dim_counts) > 1:
+            logger.warning(f"Inconsistent embedding dimensions detected: {dim_counts}")
+            # Find the most common dimension
+            most_common_dim = max(dim_counts.items(), key=lambda x: x[1])[0]
+            logger.warning(f"Using most common dimension: {most_common_dim}")
+            
+            # Filter to keep only embeddings with the most common dimension
+            valid_indices = []
+            valid_features = []
+            valid_ids = []
+            
+            for i, feat in enumerate(node_features):
+                dim = feat.shape[0] if hasattr(feat, 'shape') else len(feat)
+                if dim == most_common_dim:
+                    valid_features.append(feat)
+                    valid_ids.append(node_ids[i])
+                    valid_indices.append(i)
+            
+            # Rebuild the id_to_index mapping with new contiguous indices
+            id_to_index = {node_id: idx for idx, node_id in enumerate(valid_ids)}
+            node_features = valid_features
+            node_ids = valid_ids
+            
+            logger.info(f"Filtered to {len(node_features)} nodes with consistent dimension {most_common_dim}")
+        
         # Stack node features into a single tensor
         node_features = torch.stack(node_features)
         
-        # Create edges based on document structure and semantic similarity
+        # Create edges based on document structure, directory hierarchy, and semantic similarity
         edge_list = []
         edge_weights = []
         
-        # Helper function to add an edge
+        # Track document to directory mapping if available
+        doc_to_directory = {}
+        # Try to extract directory information from document paths
+        for doc in documents:
+            if "source" in doc and isinstance(doc["source"], str):
+                source_path = Path(doc["source"])
+                doc_to_directory[doc["file_id"]] = str(source_path.parent)
+            elif "file_path" in doc and isinstance(doc["file_path"], str):
+                file_path = Path(doc["file_path"])
+                doc_to_directory[doc["file_id"]] = str(file_path.parent)
+        
+        # Track edges statistics
+        edge_stats = {
+            "attempted": 0,  # Total attempted edges
+            "added": 0,     # Successfully added edges
+            "invalid_id": 0,  # Edges with invalid IDs
+            "self_loops": 0,  # Self-loop edges
+            "duplicate": 0,   # Duplicate edges
+        }
+        
+        # Set to track existing edges to avoid duplicates
+        existing_edges = set()
+        
+        # Helper function to add an edge with validation
         def add_edge(src_id, dst_id, weight=1.0):
-            if src_id in id_to_index and dst_id in id_to_index:
-                src_idx = id_to_index[src_id]
-                dst_idx = id_to_index[dst_id]
+            edge_stats["attempted"] += 1
+            
+            # Validate IDs exist in our mapping
+            if src_id not in id_to_index:
+                edge_stats["invalid_id"] += 1
+                return False
                 
-                # Avoid self-loops for now (we'll add them explicitly later if needed)
-                if src_idx != dst_idx:
-                    edge_list.append([src_idx, dst_idx])
-                    edge_weights.append(weight)
+            if dst_id not in id_to_index:
+                edge_stats["invalid_id"] += 1
+                return False
+            
+            # Get indices
+            src_idx = id_to_index[src_id]
+            dst_idx = id_to_index[dst_id]
+            
+            # Avoid self-loops
+            if src_idx == dst_idx:
+                edge_stats["self_loops"] += 1
+                return False
+            
+            # Check for duplicates
+            edge_key = (src_idx, dst_idx)
+            if edge_key in existing_edges:
+                edge_stats["duplicate"] += 1
+                return False
+            
+            # Add the edge
+            edge_list.append([src_idx, dst_idx])
+            edge_weights.append(weight)
+            existing_edges.add(edge_key)
+            edge_stats["added"] += 1
+            return True
         
         # Add sequential edges within documents
         for doc in documents:
@@ -466,6 +554,46 @@ class ISNETrainingOrchestrator:
             for i in range(len(chunks) - 1):
                 # Sequential connection with weight from config
                 add_edge(chunks[i]["id"], chunks[i+1]["id"], weight=sequential_weight)
+        
+        # Add directory-based relationships if directory structure is available
+        directory_relationship_weight = graph_config.get("directory_relationship_weight", 0.5)
+        
+        # Group documents by directory
+        docs_by_directory = {}
+        for doc_id, directory in doc_to_directory.items():
+            if directory not in docs_by_directory:
+                docs_by_directory[directory] = []
+            docs_by_directory[directory].append(doc_id)
+        
+        # Connect documents in the same directory
+        if directory_relationship_weight > 0 and docs_by_directory:
+            logger.info(f"Adding directory-based relationships with weight {directory_relationship_weight}")
+            
+            for directory, doc_ids in docs_by_directory.items():
+                if len(doc_ids) > 1:  # Only if multiple documents in same directory
+                    logger.info(f"Creating relationships between {len(doc_ids)} documents in directory: {directory}")
+                    
+                    # Create mapping of document ID to chunks
+                    doc_to_chunks = {}
+                    for doc in documents:
+                        doc_id = doc.get("file_id", doc.get("id", ""))
+                        if doc_id in doc_ids:
+                            doc_to_chunks[doc_id] = [chunk["id"] for chunk in doc.get("chunks", [])]
+                    
+                    # Connect first chunks of documents in the same directory
+                    for i, doc1_id in enumerate(doc_ids):
+                        if doc1_id not in doc_to_chunks or not doc_to_chunks[doc1_id]:
+                            continue
+                            
+                        for j in range(i+1, len(doc_ids)):
+                            doc2_id = doc_ids[j]
+                            if doc2_id not in doc_to_chunks or not doc_to_chunks[doc2_id]:
+                                continue
+                                
+                            # Connect first chunk of each document
+                            src_id = doc_to_chunks[doc1_id][0]
+                            dst_id = doc_to_chunks[doc2_id][0]
+                            add_edge(src_id, dst_id, directory_relationship_weight)
         
         # Add edges for semantically similar chunks based on overlap context
         for doc in documents:
@@ -495,17 +623,88 @@ class ISNETrainingOrchestrator:
         # Make graph undirected
         edge_index, edge_attr = to_undirected(edge_index, edge_attr)
         
-        # Create PyTorch Geometric Data object
-        graph_data = Data(
-            x=node_features,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            num_nodes=len(node_ids)
+        # Log edge statistics before finalizing
+        logger.info(f"Edge construction statistics:")
+        logger.info(f"  Attempted: {edge_stats['attempted']}")
+        logger.info(f"  Added: {edge_stats['added']} ({edge_stats['added']/max(1, edge_stats['attempted'])*100:.1f}%)")
+        logger.info(f"  Invalid IDs: {edge_stats['invalid_id']}")
+        logger.info(f"  Self-loops: {edge_stats['self_loops']}")
+        logger.info(f"  Duplicates: {edge_stats['duplicate']}")
+        
+        # Check if we have any edges
+        if not edge_list:
+            logger.warning("No valid edges found in graph. Creating minimal fallback graph.")
+            # Create minimal valid edges to avoid crashes
+            num_nodes = len(node_ids)
+            if num_nodes >= 2:
+                # Create a simple path graph as fallback
+                for i in range(num_nodes - 1):
+                    edge_list.append([i, i+1])
+                    edge_weights.append(1.0)
+                logger.warning(f"Created {len(edge_list)} fallback edges as simple path graph")
+            elif num_nodes == 1:
+                # Create a self-loop as last resort
+                edge_list.append([0, 0])
+                edge_weights.append(1.0)
+                logger.warning("Created single self-loop as fallback (only one node in graph)")
+            else:
+                raise ValueError("Cannot create graph with no nodes")
+        
+        # Validate edge indices before creating tensors
+        num_nodes = len(node_features)
+        valid_edges = []
+        valid_weights = []
+        invalid_count = 0
+        
+        for i, (src, dst) in enumerate(edge_list):
+            if 0 <= src < num_nodes and 0 <= dst < num_nodes:
+                valid_edges.append([src, dst])
+                valid_weights.append(edge_weights[i])
+            else:
+                invalid_count += 1
+        
+        if invalid_count > 0:
+            logger.warning(f"Filtered {invalid_count} edges with invalid indices")
+            
+        if not valid_edges:
+            logger.error("No valid edges remaining after final validation")
+            # Create minimal valid graph as last resort
+            for i in range(min(num_nodes - 1, 10)):
+                valid_edges.append([i, i+1])
+                valid_weights.append(1.0)
+            logger.warning(f"Created {len(valid_edges)} last-resort edges")
+                
+        # Create edge index tensor with proper format (2 x num_edges)
+        edge_index = torch.tensor(valid_edges, dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(valid_weights, dtype=torch.float).view(-1, 1)
+        
+        # Create graph using PyTorch Geometric Data
+        data = Data(
+            x=node_features,  # Node features
+            edge_index=edge_index,  # Graph structure
+            edge_attr=edge_attr  # Edge weights
         )
         
-        logger.info(f"Created graph with {graph_data.num_nodes} nodes and {graph_data.num_edges} edges")
+        # Add additional metadata
+        data.node_ids = node_ids
         
-        return graph_data
+        # Final validation of graph for consistency
+        num_edges = data.num_edges
+        logger.info(f"Constructed graph with {data.num_nodes} nodes and {num_edges} edges")
+        logger.info(f"Edge index tensor shape: {data.edge_index.shape}")
+        logger.info(f"Edge attributes tensor shape: {data.edge_attr.shape}")
+        
+        # Log max node index for debugging
+        if num_edges > 0:
+            max_src = data.edge_index[0].max().item()
+            max_dst = data.edge_index[1].max().item()
+            logger.info(f"Max node indices in edge index: src={max_src}, dst={max_dst}")
+            
+            # Final sanity check
+            if max_src >= data.num_nodes or max_dst >= data.num_nodes:
+                logger.error(f"Graph inconsistency detected: max index exceeds node count!")
+        
+        return data
     
     def _prepare_trainer(self) -> ISNETrainer:
         """
@@ -518,22 +717,29 @@ class ISNETrainingOrchestrator:
         model_config: ISNEModelConfig = self.config["isne"]["model"]
         train_config: ISNETrainingConfig = self.config["isne"]["training"]
         
-        # Convert config values to proper types to avoid string conversion issues
+        # Prepare arguments for the trainer
+        trainer_args = {
+            "embedding_dim": int(model_config["embedding_dim"]),
+            "hidden_dim": int(model_config["hidden_dim"]),
+            "output_dim": int(model_config["output_dim"]),
+            "num_layers": int(model_config["num_layers"]),
+            "num_heads": int(model_config["num_heads"]),
+            "dropout": float(model_config["dropout"]),
+            "learning_rate": float(train_config["learning_rate"]),
+            "weight_decay": float(train_config["weight_decay"]),
+            "lambda_feat": float(train_config.get("lambda_feat", 1.0)),
+            "lambda_struct": float(train_config.get("lambda_struct", 1.0)),
+            "lambda_contrast": float(train_config.get("lambda_contrast", 0.5)),
+            "device": self.device
+        }
+        
+        # Add custom sampler configuration if provided
+        if self.sampler_config:
+            logger.info(f"Using custom sampler configuration with {self.sampler_config['sampler_class'].__name__}")
+            trainer_args["sampler_config"] = self.sampler_config
+        
         # Initialize trainer with settings from configuration
-        trainer = ISNETrainer(
-            embedding_dim=int(model_config["embedding_dim"]),
-            hidden_dim=int(model_config["hidden_dim"]),
-            output_dim=int(model_config["output_dim"]),
-            num_layers=int(model_config["num_layers"]),
-            num_heads=int(model_config["num_heads"]),
-            dropout=float(model_config["dropout"]),
-            learning_rate=float(train_config["learning_rate"]),
-            weight_decay=float(train_config["weight_decay"]),
-            lambda_feat=float(train_config.get("lambda_feat", 1.0)),
-            lambda_struct=float(train_config.get("lambda_struct", 1.0)),
-            lambda_contrast=float(train_config.get("lambda_contrast", 0.5)),
-            device=self.device
-        )
+        trainer = ISNETrainer(**trainer_args)
         
         # Prepare the model, losses, and optimizer
         trainer.prepare_model()
@@ -592,6 +798,17 @@ class ISNETrainingOrchestrator:
             "contrastive_loss": train_stats["contrastive_loss"]
         }
         
+        # Compute summary statistics to quickly gauge training quality
+        loss_summary: Dict[str, Dict[str, float]] = {}
+        for key, series in self.training_metrics["losses"].items():
+            if series:
+                loss_summary[key] = {
+                    "final": float(series[-1]),
+                    "min": float(min(series)),
+                    "avg": float(sum(series) / len(series))
+                }
+        self.training_metrics["loss_summary"] = loss_summary
+        
         # Get model naming configuration
         model_config = self.config.get("isne", {}).get("model", {})
         name_prefix = model_config.get("name_prefix", "isne_model")
@@ -627,13 +844,21 @@ class ISNETrainingOrchestrator:
                 "training_metrics": self.training_metrics,
                 "config": self.config["isne"]["training"],
                 "model_path": str(model_path),
-                "pipeline_stats": pipeline_stats
+                "pipeline_stats": pipeline_stats,
+                "loss_summary": self.training_metrics["loss_summary"]
             }, f, indent=2)
         
         logger.info(f"ISNE training completed in {self.training_metrics['duration']:.2f} seconds")
         logger.info(f"Trained for {self.training_metrics['epochs']} epochs")
         logger.info(f"Model saved to {model_path}")
         logger.info(f"Training results saved to {results_path}")
+        
+        # Log quick metrics for human readability
+        if 'total_loss' in self.training_metrics["loss_summary"]:
+            logger.info(
+                f"Total loss -> final: {self.training_metrics['loss_summary']['total_loss']['final']:.4f}, "
+                f"min: {self.training_metrics['loss_summary']['total_loss']['min']:.4f}, "
+                f"avg: {self.training_metrics['loss_summary']['total_loss']['avg']:.4f}")
         
         return self.training_metrics
     

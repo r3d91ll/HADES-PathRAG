@@ -22,6 +22,13 @@ from src.isne.losses.structural_loss import StructuralPreservationLoss
 from src.isne.losses.contrastive_loss import ContrastiveLoss
 from src.isne.training.sampler import NeighborSampler
 
+# Import the new RandomWalkSampler (optional, as it might be passed dynamically)
+try:
+    from src.isne.training.random_walk_sampler import RandomWalkSampler
+except ImportError:
+    logger.warning("RandomWalkSampler not available. Will use default sampler unless provided in config.")
+    RandomWalkSampler = None
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -48,7 +55,8 @@ class ISNETrainer:
         lambda_feat: float = 1.0,
         lambda_struct: float = 1.0,
         lambda_contrast: float = 0.5,
-        device: Optional[Union[str, torch.device]] = None
+        device: Optional[Union[str, torch.device]] = None,
+        sampler_config: Optional[Dict[str, Any]] = None
     ) -> None:
         """
         Initialize the ISNE trainer.
@@ -66,6 +74,8 @@ class ISNETrainer:
             lambda_struct: Weight for structural preservation loss
             lambda_contrast: Weight for contrastive loss
             device: Device to use for training
+            sampler_config: Optional configuration for the sampler class to use during training.
+                          Format: {"sampler_class": Class, "sampler_params": Dict[str, Any]}
         """
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
@@ -78,6 +88,9 @@ class ISNETrainer:
         self.lambda_feat = lambda_feat
         self.lambda_struct = lambda_struct
         self.lambda_contrast = lambda_contrast
+        
+        # Store sampler configuration
+        self.sampler_config = sampler_config
         
         # Set device
         if device is None:
@@ -190,20 +203,71 @@ class ISNETrainer:
         # Prepare model if not already done
         if self.model is None:
             self.prepare_model()
-        
+            
         # Move data to device
         features = features.to(self.device)
         edge_index = edge_index.to(self.device)
         
-        # Initialize sampler
-        num_nodes = features.size(0)
-        sampler = NeighborSampler(
-            edge_index=edge_index,
-            num_nodes=num_nodes,
-            batch_size=batch_size,
-            num_hops=num_hops,
-            neighbor_size=neighbor_size
-        )
+        # Validate edge_index before initializing the sampler
+        actual_num_nodes = features.size(0)
+        if edge_index.size(1) > 0:  # Only validate if we have edges
+            max_index = edge_index.max().item()
+            if max_index >= actual_num_nodes:
+                logger.warning(f"Edge indices exceed feature count: max_index={max_index}, feature_count={actual_num_nodes}")
+                # We need to determine whether to extend features or truncate edge_index
+                if max_index - actual_num_nodes + 1 <= 100:  # If not too many additional nodes needed
+                    logger.warning(f"Extending feature matrix to accommodate edge indices (+{max_index - actual_num_nodes + 1} rows)")
+                    # Create padding with zeros for missing nodes
+                    padding = torch.zeros(max_index - actual_num_nodes + 1, features.size(1), device=self.device)
+                    features = torch.cat([features, padding], dim=0)
+                    actual_num_nodes = features.size(0)
+                    logger.info(f"Feature matrix extended to {actual_num_nodes} nodes")
+                else:
+                    logger.warning(f"Too many missing nodes ({max_index - actual_num_nodes + 1}), filtering edge_index instead")
+                    # Filter edges to only include valid node indices
+                    valid_edges_mask = (edge_index[0] < actual_num_nodes) & (edge_index[1] < actual_num_nodes)
+                    edge_index = edge_index[:, valid_edges_mask]
+                    if edge_index.size(1) == 0:
+                        logger.warning("No valid edges remain after filtering. Adding self-loops for basic connectivity.")
+                        # Add self-loops for minimal connectivity
+                        indices = torch.arange(0, min(100, actual_num_nodes), device=self.device)
+                        self_loops = torch.stack([indices, indices], dim=0)
+                        edge_index = self_loops
+        
+        # Initialize sampler with validated indices
+        logger.info(f"Initializing sampler with {actual_num_nodes} nodes and {edge_index.size(1)} edges")
+        
+        # Use custom sampler if provided, otherwise use default NeighborSampler
+        if self.sampler_config and 'sampler_class' in self.sampler_config:
+            sampler_class = self.sampler_config['sampler_class']
+            sampler_params = self.sampler_config.get('sampler_params', {})
+            
+            # Create base parameters for any sampler
+            base_params = {
+                'edge_index': edge_index,
+                'num_nodes': actual_num_nodes,
+                'batch_size': batch_size
+            }
+            
+            # Combine with custom parameters
+            all_params = {**base_params, **sampler_params}
+            
+            # Create the sampler with combined parameters
+            logger.info(f"Using custom sampler: {sampler_class.__name__}")
+            sampler = sampler_class(**all_params)
+        else:
+            # Fall back to default NeighborSampler
+            logger.info("Using default NeighborSampler")
+            sampler = NeighborSampler(
+                edge_index=edge_index,
+                num_nodes=actual_num_nodes,  # Using validated node count
+                batch_size=batch_size,
+                num_hops=num_hops,
+                neighbor_size=neighbor_size
+            )
+        
+        # Get the size of the feature matrix for validation
+        feature_size = features.shape[0]
         
         # Training loop
         best_val_metric = float('inf')
@@ -218,15 +282,61 @@ class ISNETrainer:
             # Sample batch of nodes
             batch_nodes = sampler.sample_nodes()
             
-            # Sample neighborhood
+            # Move batch_nodes to device if needed (features is on CUDA)
+            if features.is_cuda and not batch_nodes.is_cuda:
+                try:
+                    batch_nodes = batch_nodes.to(features.device)
+                except Exception as e:
+                    logger.warning(f"Error moving batch_nodes to CUDA: {str(e)}")
+                    # Try to continue with CPU tensor
+            
+            # Sample subgraph and get subset nodes
             subset_nodes, subgraph_edge_index = sampler.sample_subgraph(batch_nodes)
             
-            # Get features for subgraph
-            subgraph_features = features[subset_nodes]
+            # Validate indices are within bounds of the features tensor
+            valid_indices = None
+            try:
+                if subset_nodes.numel() > 0:
+                    # Move to CPU for safer validation
+                    subset_nodes_cpu = subset_nodes.cpu() if subset_nodes.is_cuda else subset_nodes
+                    valid_mask = (subset_nodes_cpu >= 0) & (subset_nodes_cpu < feature_size)
+                    
+                    if not valid_mask.all():
+                        logger.warning(f"Found {(~valid_mask).sum().item()} out-of-bounds indices in subset_nodes")
+                        valid_indices = subset_nodes_cpu[valid_mask]
+                    else:
+                        valid_indices = subset_nodes_cpu
+                    
+                    # Move valid_indices to the same device as features
+                    if features.is_cuda and not valid_indices.is_cuda:
+                        try:
+                            valid_indices = valid_indices.to(features.device)
+                        except Exception as e:
+                            logger.warning(f"Error moving valid_indices to CUDA: {str(e)}")
+                            # Fall back to using CPU indices with CPU operations
+                            features_cpu = features.cpu()
+                            valid_indices_cpu = valid_indices.cpu() if valid_indices.is_cuda else valid_indices
+                            return {"success": False, "error": "Device migration issue", "message": str(e)}
+                else:
+                    valid_indices = subset_nodes
+            except Exception as e:
+                logger.warning(f"Error validating subset_nodes: {str(e)}")
+                # Create an empty tensor with the same device as a fallback
+                valid_indices = torch.empty(0, dtype=torch.long, device=self.device)
             
-            # Forward pass
-            self.optimizer.zero_grad()
-            embeddings = self.model(subgraph_features, subgraph_edge_index)
+            # Skip this batch if no valid indices remain
+            if valid_indices.numel() == 0:
+                logger.warning("No valid indices remain for this batch. Skipping.")
+                continue
+            
+            # Get features using the validated indices
+            try:
+                subgraph_features = features[valid_indices]
+                self.optimizer.zero_grad()
+                embeddings = self.model(subgraph_features, subgraph_edge_index)
+            except Exception as e:
+                logger.warning(f"Error during forward pass: {str(e)}")
+                continue
             
             # Project features for feature loss
             projected_features = self.model.project_features(subgraph_features)
