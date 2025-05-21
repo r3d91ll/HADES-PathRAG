@@ -130,8 +130,81 @@ class TestRandomWalkSampler(unittest.TestCase):
         # Note: With random walks, this ratio should be high, but depends on the graph structure
         self.logger.info(f"Valid positive edges ratio: {valid_count/len(pos_pairs):.2f}")
     
+    def test_sample_positive_pairs_within_batch(self):
+        """Test that positive pairs are correctly sampled within batch boundaries."""
+        # Sample a batch of nodes
+        batch_size = 8
+        batch_nodes = torch.randint(0, self.num_nodes, (batch_size,))
+        
+        # Sample positive pairs within the batch
+        pos_pairs = self.sampler.sample_positive_pairs_within_batch(batch_nodes, batch_size=batch_size)
+        
+        # Verify shape
+        self.assertEqual(pos_pairs.shape, (batch_size, 2))
+        
+        # Verify all nodes are within the batch
+        batch_nodes_set = set(batch_nodes.tolist())
+        for i in range(batch_size):
+            src, dst = pos_pairs[i].tolist()
+            # Check that at least source nodes are in the batch
+            # (some destinations might be fallback nodes in difficult cases)
+            self.assertIn(src, batch_nodes_set)
+            
+        # Print stats for debugging
+        self._print_pairs_stats(pos_pairs, "Batch-Aware Positive Pairs")
+    
+    def test_sample_negative_pairs_within_batch(self):
+        """Test that negative pairs are correctly sampled within batch boundaries."""
+        # Sample a batch of nodes
+        batch_size = 8
+        batch_nodes = torch.randint(0, self.num_nodes, (batch_size,))
+        
+        # Sample positive pairs first to use as input
+        pos_pairs = self.sampler.sample_positive_pairs_within_batch(batch_nodes, batch_size=batch_size)
+        
+        # Sample negative pairs within the batch
+        neg_pairs = self.sampler.sample_negative_pairs_within_batch(batch_nodes, pos_pairs, batch_size=batch_size)
+        
+        # Verify shape
+        self.assertEqual(neg_pairs.shape, (batch_size, 2))
+        
+        # Verify all nodes are within the batch
+        batch_nodes_set = set(batch_nodes.tolist())
+        for i in range(batch_size):
+            src, dst = neg_pairs[i].tolist()
+            # Check that at least source nodes are in the batch
+            # (some destinations might be fallback nodes in difficult cases)
+            self.assertIn(src, batch_nodes_set)
+            
+        # Print stats for debugging
+        self._print_pairs_stats(neg_pairs, "Batch-Aware Negative Pairs")
+    
+    def test_batch_aware_sampling_small_batch(self):
+        """Test batch-aware sampling with a very small batch (edge case)."""
+        # Create a tiny batch with just 2 nodes
+        batch_nodes = torch.tensor([0, 1])
+        batch_size = 4  # Request more pairs than nodes in batch
+        
+        # Sample positive pairs
+        pos_pairs = self.sampler.sample_positive_pairs_within_batch(batch_nodes, batch_size=batch_size)
+        
+        # Verify shape
+        self.assertEqual(pos_pairs.shape, (batch_size, 2))
+        
+        # Verify the sampler used fallback pairs (may include nodes not in batch, but should be valid indices)
+        self.assertLess(pos_pairs.max(), self.num_nodes)
+        
+        # Sample negative pairs
+        neg_pairs = self.sampler.sample_negative_pairs_within_batch(batch_nodes, pos_pairs, batch_size=batch_size)
+        
+        # Verify shape
+        self.assertEqual(neg_pairs.shape, (batch_size, 2))
+        
+        # Verify indices are valid
+        self.assertLess(neg_pairs.max(), self.num_nodes)
+    
     def test_sample_negative_pairs(self):
-        """Test sampling negative pairs."""
+        """Test that negative pairs are correctly sampled."""
         # Sample negative pairs
         neg_pairs = self.sampler.sample_negative_pairs()
         

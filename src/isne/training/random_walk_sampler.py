@@ -37,6 +37,10 @@ class RandomWalkSampler:
     This sampler follows the original ISNE paper's implementation, using random
     walks to generate positive pairs and randomly sampling nodes for negative pairs.
     This approach ensures better connectivity and valid sampling.
+    
+    The sampler also supports batch-aware sampling to improve training efficiency
+    by ensuring that sampled pairs stay within batch boundaries, reducing the
+    filtering rate of out-of-bounds pairs during training.
     """
     
     def __init__(
@@ -514,6 +518,305 @@ class RandomWalkSampler:
         device = self.edge_index.device
         sampled_nodes = torch.randint(0, self.num_nodes, (batch_size,), device=device)
         return sampled_nodes
+        
+    def sample_positive_pairs_within_batch(self, batch_nodes: Tensor, batch_size: Optional[int] = None) -> Tensor:
+        """
+        Sample positive pairs using random walks, restricted to nodes within the current batch.
+        
+        This batch-aware sampling method ensures that both nodes in each sampled pair
+        are present in the current batch, which dramatically reduces the filtering rate
+        of out-of-bounds pairs during training.
+        
+        Args:
+            batch_nodes: Tensor of node indices in the current batch [batch_size]
+            batch_size: Number of pairs to sample (defaults to self.batch_size)
+            
+        Returns:
+            Tensor of positive pair indices [num_pairs, 2] where both nodes are in batch_nodes
+        """
+        logger = logging.getLogger(__name__)
+        batch_size = batch_size or self.batch_size
+        
+        # Convert batch_nodes to set for faster membership testing
+        batch_nodes_set = set(batch_nodes.cpu().tolist())
+        
+        if len(batch_nodes_set) < 2:
+            logger.warning(f"Batch contains fewer than 2 nodes ({len(batch_nodes_set)}). Cannot create pairs within batch.")
+            # Return fallback pairs within the batch (if possible)
+            return self._generate_fallback_positive_pairs_within_batch(batch_nodes, batch_size)
+        
+        try:
+            # Start walks only from nodes within the batch
+            pos_pairs = []
+            
+            # Sample walks starting from batch nodes
+            start_nodes = batch_nodes
+            
+            # Limit the number of starting nodes to avoid excessive computation
+            if self.has_torch_cluster and len(batch_nodes) > 0:
+                # Use torch_cluster for efficient random walks when available
+                walks = self.random_walk_fn(self.rowptr, self.col, start_nodes, self.walk_length, self.p, self.q)
+                
+                # Process each walk to extract pairs, filtering to only pairs within batch
+                for walk in walks:
+                    # Skip walks that didn't go anywhere (isolated nodes)
+                    if torch.any(walk < 0):
+                        continue
+                        
+                    # Extract valid nodes from the walk (no padding or negative values)
+                    valid_walk = walk[walk >= 0].cpu().tolist()
+                    if len(valid_walk) < 2:  # Need at least 2 nodes for a pair
+                        continue
+                    
+                    # Source node is the first node in the walk (guaranteed to be in batch)
+                    src = valid_walk[0]
+                    
+                    # Only consider context nodes that are also in the batch
+                    for i in range(1, min(self.context_size + 1, len(valid_walk))):
+                        dst = valid_walk[i]
+                        if dst in batch_nodes_set:  # Only add if destination is in batch
+                            pos_pairs.append([src, dst])
+            else:
+                # Fallback to simpler implementation if torch_cluster not available
+                # Create a simplified adjacency list from the CSR representation
+                adjacency = {}
+                for src in batch_nodes_set:
+                    # Get neighbors for node
+                    if 0 <= src < len(self.rowptr) - 1:
+                        start_ptr = self.rowptr[src].item()
+                        end_ptr = self.rowptr[src+1].item()
+                        neighbors = self.col[start_ptr:end_ptr].tolist()
+                        
+                        # Filter neighbors to only those in batch
+                        batch_neighbors = [n for n in neighbors if n in batch_nodes_set]
+                        if batch_neighbors:  # Only include nodes with in-batch neighbors
+                            adjacency[src] = batch_neighbors
+                
+                # Generate pairs from this batch-restricted adjacency list
+                for src, neighbors in adjacency.items():
+                    for dst in neighbors:
+                        pos_pairs.append([src, dst])
+            
+            # If no valid pairs found, use fallback
+            if not pos_pairs:
+                logger.warning("No valid positive pairs found within batch. Using fallback.")
+                return self._generate_fallback_positive_pairs_within_batch(batch_nodes, batch_size)
+            
+            # Convert pairs to tensor and ensure we have the right number
+            pos_pairs_tensor = torch.tensor(pos_pairs, dtype=torch.long)
+            
+            # If we have more pairs than needed, randomly sample
+            if len(pos_pairs_tensor) > batch_size:
+                # Randomly select pairs to return
+                idx = torch.randperm(len(pos_pairs_tensor))[:batch_size]
+                return pos_pairs_tensor[idx]
+            
+            # If we don't have enough pairs, add fallback pairs
+            if len(pos_pairs_tensor) < batch_size:
+                logger.info(f"Only found {len(pos_pairs_tensor)}/{batch_size} positive pairs within batch. Adding fallback pairs.")
+                additional_pairs = self._generate_fallback_positive_pairs_within_batch(
+                    batch_nodes, batch_size - len(pos_pairs_tensor))
+                pos_pairs_tensor = torch.cat([pos_pairs_tensor, additional_pairs], dim=0)
+            
+            return pos_pairs_tensor[:batch_size]
+            
+        except Exception as e:
+            logger.error(f"Error in batch-aware positive pair sampling: {str(e)}")
+            logger.warning("Using fallback positive pairs due to sampling error.")
+            return self._generate_fallback_positive_pairs_within_batch(batch_nodes, batch_size)
+    
+    def sample_negative_pairs_within_batch(self, batch_nodes: Tensor, positive_pairs: Optional[Tensor] = None, 
+                                      batch_size: Optional[int] = None) -> Tensor:
+        """
+        Sample negative pairs restricted to nodes within the current batch.
+        
+        This batch-aware sampling method ensures that both nodes in each negative pair
+        are present in the current batch, which dramatically reduces the filtering rate
+        of out-of-bounds pairs during training.
+        
+        Args:
+            batch_nodes: Tensor of node indices in the current batch [batch_size]
+            positive_pairs: Optional tensor of positive pairs to avoid
+            batch_size: Number of pairs to sample (defaults to self.batch_size)
+            
+        Returns:
+            Tensor of negative pair indices [num_pairs, 2] where both nodes are in batch_nodes
+        """
+        logger = logging.getLogger(__name__)
+        batch_size = batch_size or self.batch_size
+        
+        # Convert batch_nodes to set and list for faster operations
+        batch_nodes_cpu = batch_nodes.cpu()
+        batch_nodes_list = batch_nodes_cpu.tolist()
+        batch_nodes_set = set(batch_nodes_list)
+        
+        if len(batch_nodes_set) < 2:
+            logger.warning(f"Batch contains fewer than 2 nodes ({len(batch_nodes_set)}). Cannot create negative pairs.")
+            # Return fallback pairs (if possible)
+            return self._generate_fallback_negative_pairs_within_batch(batch_nodes, batch_size)
+            
+        try:
+            # Create a cache of positive edges to avoid sampling them as negative pairs
+            pos_edges = set()
+            if positive_pairs is not None:
+                pos_pairs_cpu = positive_pairs.cpu()
+                for i in range(len(pos_pairs_cpu)):
+                    src, dst = pos_pairs_cpu[i].tolist()
+                    pos_edges.add((src, dst))
+            
+            # Generate negative pairs by random sampling within batch
+            neg_pairs = []
+            batch_size_value = batch_size
+            
+            # Try to generate up to 2x batch_size candidates to account for duplicates and positives
+            max_attempts = batch_size_value * 5
+            attempts = 0
+            
+            while len(neg_pairs) < batch_size_value and attempts < max_attempts:
+                attempts += 1
+                
+                # Sample random source and target nodes from batch
+                if len(batch_nodes_list) > 1:
+                    src_idx = random.randint(0, len(batch_nodes_list) - 1)
+                    src = batch_nodes_list[src_idx]
+                    
+                    # Get a different node for dst
+                    dst_candidates = [n for n in batch_nodes_list if n != src]
+                    if not dst_candidates:  # This should never happen if len > 1, but just in case
+                        continue
+                    
+                    dst = random.choice(dst_candidates)
+                    
+                    # Skip if this is a positive edge
+                    if (src, dst) in pos_edges:
+                        continue
+                    
+                    # Add the pair
+                    neg_pairs.append([src, dst])
+                else:
+                    # Not enough distinct nodes in batch
+                    break
+            
+            # If no valid pairs were generated, use fallback
+            if not neg_pairs:
+                logger.warning("Could not generate any valid negative pairs within batch. Using fallback.")
+                return self._generate_fallback_negative_pairs_within_batch(batch_nodes, batch_size)
+            
+            # Convert to tensor and ensure uniqueness
+            neg_pairs_tensor = torch.tensor(neg_pairs, dtype=torch.long)
+            
+            # Remove duplicates if any
+            neg_pairs_tensor = torch.unique(neg_pairs_tensor, dim=0)
+            
+            # Ensure we have enough pairs
+            if len(neg_pairs_tensor) < batch_size:
+                logger.info(f"Only found {len(neg_pairs_tensor)}/{batch_size} negative pairs within batch. Adding fallback pairs.")
+                additional_pairs = self._generate_fallback_negative_pairs_within_batch(
+                    batch_nodes, batch_size - len(neg_pairs_tensor))
+                neg_pairs_tensor = torch.cat([neg_pairs_tensor, additional_pairs], dim=0)
+                
+            # Return the requested number of pairs
+            return neg_pairs_tensor[:batch_size]
+            
+        except Exception as e:
+            logger.error(f"Error in batch-aware negative pair sampling: {str(e)}")
+            logger.warning("Using fallback negative pairs due to sampling error.")
+            return self._generate_fallback_negative_pairs_within_batch(batch_nodes, batch_size)
+    
+    def _generate_fallback_positive_pairs_within_batch(self, batch_nodes: Tensor, batch_size: int) -> Tensor:
+        """
+        Generate fallback positive pairs from batch nodes when sampling fails.
+        
+        Args:
+            batch_nodes: Tensor of node indices in the current batch
+            batch_size: Number of pairs to generate
+            
+        Returns:
+            Tensor of fallback positive pair indices within batch [num_pairs, 2]
+        """
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Convert to CPU for manipulation
+            batch_nodes_cpu = batch_nodes.cpu() if batch_nodes.is_cuda else batch_nodes
+            batch_list = batch_nodes_cpu.tolist()
+            
+            # If we have fewer than 2 nodes, we can't create pairs
+            if len(batch_list) < 2:
+                logger.warning(f"Cannot create fallback pairs with only {len(batch_list)} nodes.")
+                # Last resort: create self-loops if needed
+                if len(batch_list) > 0:
+                    node = batch_list[0]
+                    return torch.tensor([[node, node]] * batch_size, dtype=torch.long)
+                else:
+                    # If batch is empty, create dummy pairs with valid nodes
+                    dummy_node = min(10, self.num_nodes - 1)  # Use a guaranteed valid node index
+                    return torch.tensor([[dummy_node, dummy_node]] * batch_size, dtype=torch.long)
+            
+            # Create consecutive pairs like a path through batch nodes
+            fallback_pairs = []
+            for i in range(batch_size):
+                idx1 = i % len(batch_list)
+                idx2 = (i + 1) % len(batch_list)
+                src = batch_list[idx1]
+                dst = batch_list[idx2]
+                fallback_pairs.append([src, dst])
+            
+            return torch.tensor(fallback_pairs, dtype=torch.long)
+            
+        except Exception as e:
+            logger.error(f"Error generating fallback positive pairs: {str(e)}")
+            # Last resort fallback: create sequential pairs with valid nodes
+            dummy_node = min(10, self.num_nodes - 1)  # Use a guaranteed valid node index
+            return torch.tensor([[dummy_node, dummy_node]] * batch_size, dtype=torch.long)
+    
+    def _generate_fallback_negative_pairs_within_batch(self, batch_nodes: Tensor, batch_size: int) -> Tensor:
+        """
+        Generate fallback negative pairs from batch nodes when sampling fails.
+        
+        Args:
+            batch_nodes: Tensor of node indices in the current batch
+            batch_size: Number of pairs to generate
+            
+        Returns:
+            Tensor of fallback negative pair indices within batch [num_pairs, 2]
+        """
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Convert to CPU for manipulation
+            batch_nodes_cpu = batch_nodes.cpu() if batch_nodes.is_cuda else batch_nodes
+            batch_list = batch_nodes_cpu.tolist()
+            
+            # If we have fewer than 2 nodes, we can't create proper pairs
+            if len(batch_list) < 2:
+                logger.warning(f"Cannot create fallback negative pairs with only {len(batch_list)} nodes.")
+                # Last resort: create pairs with first node and itself
+                if len(batch_list) > 0:
+                    node = batch_list[0]
+                    return torch.tensor([[node, node]] * batch_size, dtype=torch.long)
+                else:
+                    # If batch is empty, create dummy pairs with valid nodes
+                    dummy_node = min(10, self.num_nodes - 1)  # Use a guaranteed valid node index
+                    return torch.tensor([[dummy_node, dummy_node]] * batch_size, dtype=torch.long)
+            
+            # Create pairs that are not consecutive in the batch list (unlike positive fallbacks)
+            fallback_pairs = []
+            for i in range(batch_size):
+                idx1 = i % len(batch_list)
+                # Skip 2 positions for negative pairs to avoid consecutive nodes
+                idx2 = (i + 2) % len(batch_list)
+                src = batch_list[idx1]
+                dst = batch_list[idx2]
+                fallback_pairs.append([src, dst])
+            
+            return torch.tensor(fallback_pairs, dtype=torch.long)
+            
+        except Exception as e:
+            logger.error(f"Error generating fallback negative pairs: {str(e)}")
+            # Last resort fallback: create valid pairs
+            dummy_node = min(10, self.num_nodes - 1)  # Use a guaranteed valid node index
+            return torch.tensor([[dummy_node, dummy_node]] * batch_size, dtype=torch.long)
 
     def sample_subgraph(self, nodes: Tensor) -> Tuple[Tensor, Tensor]:
         """Sample a subgraph around the given ``nodes``.

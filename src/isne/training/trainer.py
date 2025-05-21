@@ -344,9 +344,23 @@ class ISNETrainer:
             # Compute feature preservation loss
             feat_loss = self.feature_loss(embeddings, projected_features)
             
-            # Sample positive and negative pairs for contrastive loss
-            pos_pairs = sampler.sample_positive_pairs()
-            neg_pairs = sampler.sample_negative_pairs(pos_pairs)
+            # Use batch-aware sampling for positive and negative pairs if the method is available
+            if hasattr(sampler, 'sample_positive_pairs_within_batch'):
+                logger.info("Using batch-aware sampling for positive and negative pairs")
+                # Sample pairs only from nodes within the current batch
+                pos_pairs = sampler.sample_positive_pairs_within_batch(batch_nodes)
+                neg_pairs = sampler.sample_negative_pairs_within_batch(batch_nodes, pos_pairs)
+                # Track the usage of batch-aware sampling for metrics
+                epoch_stats = getattr(self, 'epoch_stats', {})
+                epoch_stats['batch_aware_sampling'] = True
+            else:
+                # Fall back to standard sampling if batch-aware methods are not available
+                logger.info("Using standard sampling for positive and negative pairs")
+                pos_pairs = sampler.sample_positive_pairs()
+                neg_pairs = sampler.sample_negative_pairs(pos_pairs)
+                # Track the usage of standard sampling for metrics
+                epoch_stats = getattr(self, 'epoch_stats', {})
+                epoch_stats['batch_aware_sampling'] = False
             
             # Compute structural preservation loss
             struct_loss = self.structural_loss(embeddings, subgraph_edge_index)
