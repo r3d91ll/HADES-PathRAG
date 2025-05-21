@@ -10,8 +10,8 @@ import logging
 import torch
 import numpy as np
 import random
+from typing import List, Optional, Set, Tuple, Dict, Any, Union
 from torch import Tensor
-from typing import List, Optional, Set, Tuple, Dict, Any
 from torch_geometric.utils import sort_edge_index
 from torch_geometric.utils.num_nodes import maybe_num_nodes
 
@@ -24,7 +24,7 @@ try:
     from torch_geometric.utils.sparse import index2ptr
 except ImportError:
     # Fallback implementation of index2ptr
-    def index2ptr(index, size):
+    def index2ptr(index: Tensor, size: int) -> Tensor:
         ptr = torch.zeros(size + 1, dtype=torch.long, device=index.device)
         torch.scatter_add_(ptr, 0, index + 1, torch.ones_like(index))
         return torch.cumsum(ptr, 0)
@@ -46,7 +46,7 @@ class RandomWalkSampler:
     def __init__(
         self,
         edge_index: Tensor,
-        num_nodes: int = None,
+        num_nodes: Optional[int] = None,
         batch_size: int = 32,
         walk_length: int = 5,
         context_size: int = 2,
@@ -76,7 +76,8 @@ class RandomWalkSampler:
             seed: Random seed for reproducibility
         """
         self.edge_index = edge_index
-        self.num_nodes = num_nodes
+        # Ensure num_nodes is not None to prevent type errors in arithmetic operations
+        self.num_nodes = maybe_num_nodes(edge_index) if num_nodes is None else num_nodes
         self.batch_size = batch_size
         self.walk_length = walk_length
         self.context_size = context_size
@@ -669,7 +670,7 @@ class RandomWalkSampler:
                     pos_edges.add((src, dst))
             
             # Generate negative pairs by random sampling within batch
-            neg_pairs = []
+            neg_pairs: List[Tensor] = []
             batch_size_value = batch_size
             
             # Try to generate up to 2x batch_size candidates to account for duplicates and positives
@@ -843,7 +844,7 @@ class RandomWalkSampler:
         """
         # Lazy import to avoid hard dependency during doc generation
         try:
-            from torch_geometric.utils import subgraph  # type: ignore
+            from torch_geometric.utils import subgraph
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 "PyTorch Geometric is required for subgraph sampling. Install with: pip install torch-geometric"
