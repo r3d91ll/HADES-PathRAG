@@ -73,7 +73,7 @@ model_cache/
 *.h5
 *.pkl
 *.joblib
-models/
+#models/
 embeddings/
 checkpoints/
 logs/

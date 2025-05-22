@@ -36,13 +36,16 @@ inference:
   batch_size: 64           # Batch size for inference
   device: "cpu"            # Inference device (cpu or cuda:x)
   cache_embeddings: true   # Whether to cache enhanced embeddings
+  model_path: "./models/isne/isne_model_latest.pt"  # Path to the trained ISNE model
+                                                   # IMPORTANT: This is used by the ingestion service
+                                                   # when porting from test script to production service
 
 # Directory configuration
 directories:
-  data_dir: "./data/isne"              # Base directory for ISNE data
-  input_dir: "./test-output/pipeline-mp-test"  # Default input directory
-  output_dir: "./test-output/isne-training"    # Default output directory
-  model_dir: "./models/isne"                   # Directory for model storage
+  data_dir: "./data/isne"                     # Base directory for ISNE data
+  input_dir: "./test-output/pipeline-mp-test"  # Default input directory for pipeline output
+  output_dir: "./test-output/isne-enhanced"    # Default output directory for enhanced embeddings
+  model_dir: "./models/isne"                   # Directory for model storage and loading
   cache_dir: "./cache/isne-embeddings"         # Cache directory for embeddings
 
 # Graph construction parameters
