@@ -21,6 +21,7 @@ In ArangoDB, we'll use both **document collections** (for storing nodes) and **e
 1. **Documents**
    - Purpose: Store metadata about each document
    - Structure:
+  
      ```json
      {
        "_key": "pdf_4588_CG-RAG_Research...",  // Unique identifier
@@ -38,6 +39,7 @@ In ArangoDB, we'll use both **document collections** (for storing nodes) and **e
 2. **Chunks**
    - Purpose: Store document chunks with their text content and embeddings
    - Structure:
+
      ```json
      {
        "_key": "pdf_c0a7a004_CG-RAG__Research_..._p0",  // Unique identifier
@@ -68,6 +70,7 @@ In ArangoDB, we'll use both **document collections** (for storing nodes) and **e
      - **semantic**: Content-based relationships
      - **citation**: Cross-references between chunks
    - Structure:
+
      ```json
      {
        "_from": "Chunks/pdf_chunk1_id",  // Source chunk
@@ -184,6 +187,7 @@ db._createGraph("PathRAG", [
 To load our ISNE-enhanced JSON data into ArangoDB:
 
 1. First, insert document metadata:
+
    ```javascript
    for (const doc of jsonData) {
      const documentData = {
@@ -202,6 +206,7 @@ To load our ISNE-enhanced JSON data into ArangoDB:
    ```
 
 2. Then, insert chunks with their embeddings:
+
    ```javascript
    for (const doc of jsonData) {
      for (const chunk of doc.chunks) {
@@ -229,6 +234,7 @@ To load our ISNE-enhanced JSON data into ArangoDB:
    ```
 
 3. Finally, create relationships between chunks:
+
    ```javascript
    // Create sequential relationships
    for (const doc of jsonData) {
@@ -381,6 +387,7 @@ This setup provides a flexible, powerful foundation for the HADES-PathRAG system
 4. Combine graph traversals with semantic searches
 
 Both the base embeddings and ISNE-enhanced embeddings are valuable:
+
 - Base embeddings provide a foundational semantic representation
 - ISNE embeddings incorporate structural information that improves retrieval relevance
 - Storing both gives us flexibility to use either depending on the specific query needs
