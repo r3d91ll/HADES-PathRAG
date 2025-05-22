@@ -666,7 +666,504 @@ class PipelineMultiprocessTester:
         
         # Store and return training results
         self.isne_results = training_results
+        
         return training_results
+        
+    def run_ingestion(self, output_dir=None, model_path="./models/isne/isne_model_latest.pt", save_enhanced=True) -> Dict[str, Any]:
+        """
+        Run the ingestion pipeline with ISNE model enhancement and save to JSON.
+        
+        This method demonstrates how to use a trained ISNE model to enhance document embeddings
+        during ingestion and save the enhanced documents as JSON for later reference.
+        
+        Args:
+            model_path: Path to the trained ISNE model
+            output_file: Optional custom output file path for enhanced documents
+            
+        Returns:
+            Dictionary with ingestion statistics and results
+        """
+        logger.info("=== Starting Ingestion Pipeline with ISNE Enhancement ===")
+        
+        # First, run the standard document processing pipeline to get documents with embeddings
+        logger.info("Step 1: Processing documents through standard pipeline...")
+        results = self.run_test(run_isne_training=False)
+        
+        # Get the processed documents
+        documents = self.processing_stats["results"]
+        logger.info(f"Processed {len(documents)} documents with base embeddings")
+        
+        # Now apply the ISNE model to enhance the embeddings
+        logger.info("\nStep 2: Applying ISNE model to enhance embeddings...")
+        isne_start_time = time.time()
+        enhanced_documents = self.apply_isne_model(documents, model_path)
+        isne_end_time = time.time()
+        isne_processing_time = isne_end_time - isne_start_time
+        logger.info(f"ISNE enhancement completed in {isne_processing_time:.2f} seconds")
+        
+        # Save the enhanced documents to a JSON file
+        logger.info("\nStep 3: Saving enhanced documents to JSON file...")
+        save_start_time = time.time()
+        
+        # Determine output path
+        if output_dir:
+            json_output_path = Path(output_dir) / "isne_enhanced_documents.json"
+        else:
+            json_output_path = self.output_dir / "isne_enhanced_documents.json"
+            
+        # Save full documents and a sample version
+        try:
+            # Create a sample with limited documents for easier viewing
+            sample_size = min(2, len(enhanced_documents))
+            sample_docs = enhanced_documents[:sample_size]
+            
+            # Save sample to a separate file
+            sample_path = self.output_dir / "isne_enhanced_sample.json"
+            with open(sample_path, "w") as f:
+                json.dump(sample_docs, f, indent=2)
+            
+            # Save all documents
+            with open(json_output_path, "w") as f:
+                json.dump(enhanced_documents, f, indent=2)
+                
+            logger.info(f"Saved all enhanced documents to {json_output_path}")
+            logger.info(f"Saved sample of {sample_size} documents to {sample_path}")
+        except Exception as e:
+            logger.error(f"Error saving enhanced documents: {e}")
+            
+        save_end_time = time.time()
+        save_time = save_end_time - save_start_time
+        logger.info(f"Document saving completed in {save_time:.2f} seconds")
+        
+        # Compile and return statistics
+        ingestion_stats = {
+            "total_documents": len(enhanced_documents),
+            "processing_time": self.processing_stats["parallel_time"],
+            "isne_enhancement_time": isne_processing_time,
+            "json_save_time": save_time,
+            "total_ingestion_time": time.time() - self.processing_stats["test_start_time"],
+            "output_path": str(json_output_path),
+            "sample_path": str(sample_path)
+        }
+        
+        # Generate comprehensive report
+        self._generate_ingestion_report(ingestion_stats)
+        
+        return ingestion_stats
+    
+    def apply_isne_model(self, documents: List[Dict[str, Any]], model_path: str) -> List[Dict[str, Any]]:
+        """
+        Apply trained ISNE model to enhance document embeddings.
+        
+        Args:
+            documents: List of processed documents with base embeddings
+            model_path: Path to the trained ISNE model
+            
+        Returns:
+            List of documents with enhanced embeddings
+        """
+        from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
+        import torch
+        
+        logger.info(f"Loading ISNE model from {model_path}")
+        
+        # Determine device
+        device = "cpu"  # Default fallback
+        if self.config.get("gpu_execution", {}).get("enabled", False):
+            device = self.config["gpu_execution"]["isne"]["device"]
+            logger.info(f"Using GPU for ISNE inference: {device}")
+        elif self.config.get("cpu_execution", {}).get("enabled", False):
+            device = "cpu"
+            logger.info(f"Using CPU for ISNE inference")
+        
+        # Check if model file exists
+        model_file = Path(model_path)
+        if not model_file.exists():
+            logger.error(f"Model file not found: {model_path}")
+            raise FileNotFoundError(f"ISNE model file not found: {model_path}")
+        
+        # Load model
+        try:
+            model_data = torch.load(model_path, map_location=device)
+            logger.info(f"Successfully loaded model with keys: {list(model_data.keys())}")
+            
+            # Load model settings
+            model_config = model_data.get("config", {})
+            if not model_config:
+                logger.warning("Model config not found in saved model, using defaults")
+                
+            # Extract model parameters
+            embedding_dim = model_config.get("embedding_dim", 768)  # Default ModernBERT dimension
+            hidden_dim = model_config.get("hidden_dim", 256)
+            output_dim = model_config.get("output_dim", 768)
+            
+            logger.info(f"Model dimensions: {embedding_dim} → {hidden_dim} → {output_dim}")
+            
+            # Recreate the model architecture
+            from src.isne.models.isne_model import ISNEModel
+            model = ISNEModel(
+                in_features=embedding_dim,
+                hidden_features=hidden_dim,
+                out_features=output_dim,
+                num_layers=model_config.get("num_layers", 2)
+            )
+            
+            # Load the model weights
+            model.load_state_dict(model_data["model_state_dict"])
+            model.to(device)
+            model.eval()  # Set to evaluation mode
+            
+            logger.info("ISNE model loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Error loading ISNE model: {e}")
+            raise
+        
+        # Prepare documents for ISNE inference
+        logger.info("Preparing document graph for ISNE inference...")
+        
+        # Create a simplified graph building function similar to what the trainer uses
+        def build_graph_from_documents(docs):
+            import torch
+            from torch_geometric.data import Data
+            
+            # Extract embeddings and metadata
+            node_embeddings = []
+            node_metadata = []
+            edge_index_src = []
+            edge_index_dst = []
+            edge_attr = []
+            
+            # Node index mapping
+            node_idx_map = {}
+            current_idx = 0
+            
+            # First pass: collect all nodes
+            for doc in docs:
+                if "chunks" not in doc or not doc["chunks"]:
+                    continue
+                    
+                for chunk_idx, chunk in enumerate(doc["chunks"]):
+                    # Skip chunks without embeddings
+                    if "embedding" not in chunk or chunk["embedding"] is None:
+                        continue
+                        
+                    # Create a unique ID for this chunk
+                    chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                    
+                    # Store the node index mapping
+                    node_idx_map[chunk_id] = current_idx
+                    current_idx += 1
+                    
+                    # Add the embedding and metadata
+                    node_embeddings.append(chunk["embedding"])
+                    node_metadata.append({
+                        "file_id": doc["file_id"],
+                        "chunk_id": chunk_id,
+                        "text": chunk.get("text", ""),
+                        "metadata": chunk.get("metadata", {})
+                    })
+            
+            # Second pass: create edges
+            for doc in docs:
+                if "chunks" not in doc or len(doc["chunks"]) < 2:
+                    continue
+                    
+                # Create sequential edges between chunks in the same document
+                for i in range(len(doc["chunks"]) - 1):
+                    src_id = f"{doc['file_id']}_{i}"
+                    dst_id = f"{doc['file_id']}_{i+1}"
+                    
+                    if src_id in node_idx_map and dst_id in node_idx_map:
+                        # Add sequential edge
+                        edge_index_src.append(node_idx_map[src_id])
+                        edge_index_dst.append(node_idx_map[dst_id])
+                        edge_attr.append([1.0])  # Sequential relationship
+                        
+                        # Add reverse edge for undirected graph
+                        edge_index_src.append(node_idx_map[dst_id])
+                        edge_index_dst.append(node_idx_map[src_id])
+                        edge_attr.append([1.0])
+            
+            # Create the PyTorch Geometric data object
+            if not node_embeddings:
+                logger.warning("No valid embeddings found in documents")
+                return None, []
+                
+            node_embeddings_tensor = torch.tensor(node_embeddings, dtype=torch.float)
+            edge_index = torch.tensor([edge_index_src, edge_index_dst], dtype=torch.long)
+            edge_attr_tensor = torch.tensor(edge_attr, dtype=torch.float)
+            
+            graph = Data(
+                x=node_embeddings_tensor,
+                edge_index=edge_index,
+                edge_attr=edge_attr_tensor
+            )
+            
+            logger.info(f"Created graph with {graph.num_nodes} nodes and {graph.num_edges} edges")
+            
+            return graph, node_metadata, node_idx_map
+        
+        # Build the graph from documents
+        graph, node_metadata, node_idx_map = build_graph_from_documents(documents)
+        
+        if graph is None or graph.num_nodes == 0:
+            logger.error("Failed to build valid graph from documents")
+            return documents
+        
+        # Apply the ISNE model to enhance embeddings
+        logger.info(f"Applying ISNE model to enhance {graph.num_nodes} embeddings...")
+        try:
+            with torch.no_grad():
+                # Move graph to appropriate device
+                graph = graph.to(device)
+                
+                # Make sure all tensors are properly shaped and on the correct device
+                x = graph.x.to(device)
+                edge_index = graph.edge_index.to(device)
+                
+                # Handle edge attributes with careful type checking
+                edge_attr = None
+                if hasattr(graph, 'edge_attr') and graph.edge_attr is not None:
+                    edge_attr = graph.edge_attr
+                    # Convert to float tensor if needed
+                    if not isinstance(edge_attr, torch.FloatTensor) and not isinstance(edge_attr, torch.cuda.FloatTensor):
+                        edge_attr = edge_attr.float()
+                    
+                    # Reshape if needed
+                    if edge_attr.dim() == 2 and edge_attr.size(1) == 1:
+                        edge_attr = edge_attr.squeeze(1)
+                    
+                    edge_attr = edge_attr.to(device)
+                
+                # The ISNEModel forward method doesn't use edge_attr
+                # It only takes x, edge_index, and an optional return_attention flag
+                enhanced_embeddings = model(x, edge_index)
+                
+                # Move back to CPU for further processing
+                enhanced_embeddings = enhanced_embeddings.cpu().numpy()
+                
+                logger.info(f"Successfully generated {len(enhanced_embeddings)} enhanced embeddings")
+                
+        except Exception as e:
+            logger.error(f"Error during ISNE inference: {e}")
+            return documents
+        
+        # Update documents with enhanced embeddings
+        logger.info("Updating documents with enhanced embeddings...")
+        
+        # Create deep copy of documents to avoid modifying the originals
+        import copy
+        enhanced_documents = copy.deepcopy(documents)
+        
+        # Update embeddings in the document structure
+        for doc_idx, doc in enumerate(enhanced_documents):
+            if "chunks" not in doc or not doc["chunks"]:
+                continue
+                
+            for chunk_idx, chunk in enumerate(doc["chunks"]):
+                chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                
+                if chunk_id in node_idx_map:
+                    node_idx = node_idx_map[chunk_id]
+                    # Add the enhanced embedding to the chunk
+                    chunk["isne_embedding"] = enhanced_embeddings[node_idx].tolist()
+        
+        logger.info("Document enhancement with ISNE embeddings completed")
+        
+        return enhanced_documents
+    
+    def store_in_arango(self, documents: List[Dict[str, Any]], db_name: str, db_mode: str, force: bool = False) -> Dict[str, Any]:
+        """
+        Store enhanced documents in ArangoDB.
+        
+        Args:
+            documents: List of documents with enhanced embeddings
+            db_name: Name of the ArangoDB database
+            db_mode: Database mode ('create' or 'append')
+            force: Force recreation of collections even if they exist
+            
+        Returns:
+            Dictionary with storage statistics
+        """
+        from src.storage.arango.connection import ArangoConnection
+        from src.storage.arango.repository import ArangoRepository
+        import uuid
+        
+        logger.info(f"Initializing ArangoDB connection for database '{db_name}'")
+        
+        # Create storage configuration
+        storage_config = {
+            "host": "localhost",
+            "port": 8529,
+            "username": "root",
+            "password": "",  # Default empty password
+            "database": db_name,
+            "collection_prefix": "isne_",
+            "use_vector_index": True,
+            "vector_dimensions": 768  # Assuming ISNE output is same dimension
+        }
+        
+        # Connect to ArangoDB
+        try:
+            # Initialize connection
+            connection = ArangoConnection(
+                host=storage_config["host"],
+                port=storage_config["port"],
+                username=storage_config["username"],
+                password=storage_config["password"]
+            )
+            
+            # Set up database
+            if not connection.database_exists(db_name):
+                logger.info(f"Creating database '{db_name}'")
+                connection.create_database(db_name)
+            
+            # Set the current database
+            connection.set_database(db_name)
+            
+            # Initialize repository
+            node_collection = f"{storage_config['collection_prefix']}nodes"
+            edge_collection = f"{storage_config['collection_prefix']}edges"
+            graph_name = f"{storage_config['collection_prefix']}graph"
+            
+            repository = ArangoRepository(
+                connection=connection,
+                node_collection_name=node_collection,
+                edge_collection_name=edge_collection,
+                graph_name=graph_name,
+                vector_dimensions=storage_config["vector_dimensions"],
+                use_vector_index=storage_config["use_vector_index"]
+            )
+            
+            # Handle create mode with force option
+            if db_mode == "create" or force:
+                # Delete graph and collections if they exist
+                if force and connection.graph_exists(graph_name):
+                    logger.info(f"Dropping existing graph '{graph_name}'")
+                    connection.delete_graph(graph_name, drop_collections=True)
+                elif force:
+                    # Delete collections if they exist
+                    if connection.collection_exists(node_collection):
+                        logger.info(f"Dropping existing node collection '{node_collection}'")
+                        connection.delete_collection(node_collection)
+                    if connection.collection_exists(edge_collection):
+                        logger.info(f"Dropping existing edge collection '{edge_collection}'")
+                        connection.delete_collection(edge_collection)
+                
+                # Create collections and graph
+                logger.info(f"Setting up collections and graph in '{db_mode}' mode")
+                repository.setup_collections()
+            
+        except Exception as e:
+            logger.error(f"Error initializing ArangoDB connection: {e}")
+            raise
+        
+        # Store documents in ArangoDB
+        logger.info("Storing documents in ArangoDB...")
+        
+        # Statistics counters
+        stats = {
+            "nodes_created": 0,
+            "edges_created": 0,
+            "errors": 0
+        }
+        
+        # Process documents
+        dataset_id = str(uuid.uuid4())
+        try:
+            for doc in documents:
+                if "chunks" not in doc or not doc["chunks"]:
+                    continue
+                
+                # Process each chunk as a node
+                node_ids = []
+                for chunk_idx, chunk in enumerate(doc["chunks"]):
+                    # Skip chunks without embeddings
+                    if "embedding" not in chunk or chunk["embedding"] is None:
+                        continue
+                    
+                    # Prepare node data
+                    node_data = {
+                        "doc_id": doc["file_id"],
+                        "chunk_id": chunk_idx,
+                        "content": chunk.get("text", ""),
+                        "metadata": {
+                            "file_name": doc.get("file_name", ""),
+                            "file_path": doc.get("file_path", ""),
+                            "dataset_id": dataset_id,
+                            "chunk_metadata": chunk.get("metadata", {})
+                        }
+                    }
+                    
+                    # Add embeddings
+                    node_data["embedding"] = chunk["embedding"]
+                    if "isne_embedding" in chunk:
+                        node_data["isne_embedding"] = chunk["isne_embedding"]
+                    
+                    # Store node in ArangoDB
+                    try:
+                        node_id = repository.add_node(
+                            content=node_data["content"],
+                            metadata=node_data["metadata"],
+                            embeddings={
+                                "base": node_data["embedding"],
+                                "isne": node_data.get("isne_embedding", node_data["embedding"])
+                            }
+                        )
+                        node_ids.append(node_id)
+                        stats["nodes_created"] += 1
+                    except Exception as e:
+                        logger.error(f"Error adding node: {e}")
+                        stats["errors"] += 1
+                        continue
+                
+                # Create edges between sequential chunks
+                if len(node_ids) >= 2:
+                    for i in range(len(node_ids) - 1):
+                        try:
+                            repository.add_edge(
+                                from_id=node_ids[i],
+                                to_id=node_ids[i+1],
+                                relation_type="SEQUENTIAL",
+                                weight=1.0,
+                                metadata={"document_id": doc["file_id"]}
+                            )
+                            stats["edges_created"] += 1
+                        except Exception as e:
+                            logger.error(f"Error adding edge: {e}")
+                            stats["errors"] += 1
+            
+            logger.info(f"Storage complete: {stats['nodes_created']} nodes, {stats['edges_created']} edges created")
+            
+        except Exception as e:
+            logger.error(f"Error during document storage: {e}")
+            stats["errors"] += 1
+        
+        return stats
+    
+    def _generate_ingestion_report(self, stats: Dict[str, Any]):
+        """Generate a comprehensive report for the ingestion process."""
+        logger.info("\n=== Ingestion Pipeline Report ===")
+        
+        logger.info("\nProcessing Statistics:")
+        logger.info(f"  Total Documents:       {stats['total_documents']}")
+        logger.info(f"  Document Processing:   {stats['processing_time']:.2f}s")
+        logger.info(f"  ISNE Enhancement:      {stats['isne_enhancement_time']:.2f}s")
+        logger.info(f"  JSON Saving:           {stats['json_save_time']:.2f}s")
+        logger.info(f"  Total Ingestion Time:  {stats['total_ingestion_time']:.2f}s")
+        
+        logger.info("\nOutput Files:")
+        logger.info(f"  All Documents:         {stats['output_path']}")
+        logger.info(f"  Sample Documents:      {stats['sample_path']}")
+        
+        logger.info("\nIngestion Pipeline Completed Successfully!")
+        
+        # Write report to file
+        report_file = self.output_dir / "ingestion_report.json"
+        with open(report_file, "w") as f:
+            json.dump(stats, f, indent=2)
+        logger.info(f"Detailed ingestion report saved to {report_file}")
 
 # Initialize multiprocessing
 def init_mp():
@@ -686,21 +1183,38 @@ def main():
     )
     
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Pipeline Multiprocessing Test')
-    parser.add_argument('--workers', type=int, default=4,
+    parser = argparse.ArgumentParser(description='HADES-PathRAG Pipeline Multiprocessing Test')
+    
+    # Mode selection arguments
+    mode_group = parser.add_argument_group('Mode Selection')
+    mode_group.add_argument('--mode', type=str, choices=['process', 'train', 'ingest'], default='process',
+                        help='Pipeline mode: process (document processing only), train (ISNE training), ingest (ISNE ingestion)')
+    
+    # Common arguments
+    common_group = parser.add_argument_group('Common Options')
+    common_group.add_argument('--workers', type=int, default=4,
                         help='Number of worker processes')
-    parser.add_argument('--files', type=int, default=10,
+    common_group.add_argument('--files', type=int, default=10,
                         help='Maximum number of files to process')
-    parser.add_argument('--data-dir', type=str, default='./test-data',
+    common_group.add_argument('--data-dir', type=str, default='./test-data',
                         help='Directory containing test data')
-    parser.add_argument('--output-dir', type=str, default='./test-output/pipeline-mp-test',
+    common_group.add_argument('--output-dir', type=str, default='./test-output/pipeline-mp-test',
                         help='Directory for test output')
-    parser.add_argument('--run-isne', action='store_true',
-                        help='Run ISNE training directly with in-memory data after pipeline processing')
+    
+    # Legacy support
+    common_group.add_argument('--run-isne', action='store_true',
+                        help='[Legacy] Run ISNE training directly (same as --mode=train)')
+    
+    # Ingestion mode arguments
+    ingest_group = parser.add_argument_group('Ingestion Options')
+    ingest_group.add_argument('--model-path', type=str, default='./models/isne/isne_model_latest.pt',
+                        help='Path to trained ISNE model (for ingestion mode)')
+    ingest_group.add_argument('--output-file', type=str,
+                        help='Custom output file path for enhanced documents (for ingestion mode)')
     
     args = parser.parse_args()
     
-    # Run the test
+    # Create the pipeline tester
     test = PipelineMultiprocessTester(
         test_data_dir=args.data_dir,
         output_dir=args.output_dir,
@@ -709,7 +1223,25 @@ def main():
         batch_size=8  # Default batch size
     )
     
-    test.run_test(run_isne_training=args.run_isne)
+    # Determine which mode to run
+    mode = args.mode
+    # Support legacy --run-isne flag
+    if args.run_isne and mode == 'process':
+        mode = 'train'
+    
+    # Run the appropriate pipeline mode
+    if mode == 'train':
+        logger.info("Running in ISNE training mode")
+        test.run_test(run_isne_training=True)
+    elif mode == 'ingest':
+        logger.info("Running in ISNE ingestion mode")
+        test.run_ingestion(
+            model_path=args.model_path,
+            output_dir=args.output_file
+        )
+    else:  # Default to 'process' mode
+        logger.info("Running in document processing mode")
+        test.run_test(run_isne_training=False)
 
 if __name__ == "__main__":
     # Configure for multiprocessing on Windows
