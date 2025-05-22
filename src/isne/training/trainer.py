@@ -146,8 +146,22 @@ class ISNETrainer:
             negative_samples=5
         )
         
+        # Initialize filtering stats dictionary to store metrics from callback
+        self.filtering_stats = {}
+        
+        # Define the callback function for contrastive loss filtering metrics
+        def filter_callback(filtered_pos_count, total_pos_count, filtered_neg_count, total_neg_count):
+            self.filtering_stats.update({
+                'filtered_pos_count': filtered_pos_count,
+                'total_pos_count': total_pos_count,
+                'filtered_neg_count': filtered_neg_count,
+                'total_neg_count': total_neg_count
+            })
+        
+        # Initialize contrastive loss with filter callback
         self.contrastive_loss = ContrastiveLoss(
-            lambda_contrast=self.lambda_contrast
+            lambda_contrast=self.lambda_contrast,
+            filter_callback=filter_callback
         )
     
     def _initialize_optimizer(self) -> None:
@@ -371,6 +385,11 @@ class ISNETrainer:
                 'neg_fallback': 0
             }
             
+            # Initialize rate variables to zero by default to prevent UnboundLocalError
+            filtered_rate = 0.0
+            pos_filtered_rate = 0.0
+            neg_filtered_rate = 0.0
+            
             # Sample pairs using the appropriate method
             if use_batch_aware and hasattr(sampler, 'sample_positive_pairs_within_batch'):
                 logger.info("Using batch-aware sampling for positive and negative pairs")
@@ -424,6 +443,20 @@ class ISNETrainer:
                 logger.info(f"Batch-aware sampling metrics:")
                 logger.info(f"  - Within-batch pairs: {batch_metrics['within_batch_pairs']}/{batch_metrics['total_pairs']} ({within_batch_rate:.2f}%)")
                 logger.info(f"  - Fallback pairs: {batch_metrics['fallback_pairs']}/{batch_metrics['total_pairs']} ({fallback_rate:.2f}%)")
+                
+                # Enhanced filtering metrics with separate positive and negative stats
+                # Ensure we're displaying the most accurate filtering information
+                filtered_percent = 100 * batch_metrics['filtered_pairs'] / batch_metrics['total_pairs'] if batch_metrics['total_pairs'] > 0 else 0
+                logger.info(f"  - Filtered by loss: {batch_metrics['filtered_pairs']}/{batch_metrics['total_pairs']} ({filtered_percent:.2f}%)")
+                
+                # Display the positive and negative filtering specifics
+                if 'filtered_pos' in batch_metrics and 'filtered_neg' in batch_metrics:
+                    # Use the actual positive pair count for more accurate percentage
+                    pos_filtered_percent = 100 * batch_metrics['filtered_pos'] / original_pos_count if original_pos_count > 0 else 0
+                    neg_filtered_percent = 100 * batch_metrics['filtered_neg'] / original_neg_count if original_neg_count > 0 else 0
+                    logger.info(f"  - Filtered positive: {batch_metrics['filtered_pos']}/{original_pos_count} ({pos_filtered_percent:.2f}%)")
+                    logger.info(f"  - Filtered negative: {batch_metrics['filtered_neg']}/{original_neg_count} ({neg_filtered_percent:.2f}%)")
+                
                 logger.info(f"  - Positive pairs: {batch_metrics['pos_within_batch']} in-batch, {batch_metrics['pos_fallback']} fallback")
                 logger.info(f"  - Negative pairs: {batch_metrics['neg_within_batch']} in-batch, {batch_metrics['neg_fallback']} fallback")
                 logger.info(f"  - Sampling time: {pos_time:.4f}s for positive, {neg_time:.4f}s for negative")
@@ -436,10 +469,16 @@ class ISNETrainer:
                     self.train_stats['batch_aware_metrics'] = {
                         'within_batch_rate': [],
                         'fallback_rate': [],
+                        'filtered_rate': [],
+                        'pos_filtered_rate': [],
+                        'neg_filtered_rate': [],
                         'pos_within_batch': [],
                         'pos_fallback': [],
                         'neg_within_batch': [],
                         'neg_fallback': [],
+                        'filtered_pairs': [],
+                        'filtered_pos': [],
+                        'filtered_neg': [],
                         'pos_sampling_time': [],
                         'neg_sampling_time': []
                     }
@@ -447,10 +486,16 @@ class ISNETrainer:
                 # Append current batch metrics
                 self.train_stats['batch_aware_metrics']['within_batch_rate'].append(within_batch_rate)
                 self.train_stats['batch_aware_metrics']['fallback_rate'].append(fallback_rate)
+                self.train_stats['batch_aware_metrics']['filtered_rate'].append(filtered_rate)
+                self.train_stats['batch_aware_metrics']['pos_filtered_rate'].append(pos_filtered_rate)
+                self.train_stats['batch_aware_metrics']['neg_filtered_rate'].append(neg_filtered_rate)
                 self.train_stats['batch_aware_metrics']['pos_within_batch'].append(batch_metrics['pos_within_batch'])
                 self.train_stats['batch_aware_metrics']['pos_fallback'].append(batch_metrics['pos_fallback'])
                 self.train_stats['batch_aware_metrics']['neg_within_batch'].append(batch_metrics['neg_within_batch'])
                 self.train_stats['batch_aware_metrics']['neg_fallback'].append(batch_metrics['neg_fallback'])
+                self.train_stats['batch_aware_metrics']['filtered_pairs'].append(batch_metrics['filtered_pairs'])
+                self.train_stats['batch_aware_metrics']['filtered_pos'].append(batch_metrics.get('filtered_pos', 0))
+                self.train_stats['batch_aware_metrics']['filtered_neg'].append(batch_metrics.get('filtered_neg', 0))
                 self.train_stats['batch_aware_metrics']['pos_sampling_time'].append(pos_time)
                 self.train_stats['batch_aware_metrics']['neg_sampling_time'].append(neg_time)
             else:
@@ -486,16 +531,79 @@ class ISNETrainer:
                 # Track filtering statistics
                 self.train_stats.setdefault('filtering_rate', [])
                 self.train_stats['filtering_rate'].append(filter_rate)
+                
+                # Make sure filtered_rate is defined for metrics tracking
+                filtered_rate = filter_rate
             
             # Compute structural preservation loss
             struct_loss = self.structural_loss(embeddings, subgraph_edge_index)
             
-            # Compute contrastive loss
+            # Track the original pair counts before contrastive loss filtering
+            original_pos_count = len(pos_pairs)
+            original_neg_count = len(neg_pairs)
+            original_total_count = original_pos_count + original_neg_count
+            
+            # Reset filtering stats before contrastive loss computation
+            self.filtering_stats = {
+                'filtered_pos_count': 0,
+                'total_pos_count': 0,
+                'filtered_neg_count': 0,
+                'total_neg_count': 0
+            }
+            
+            # We'll rely on the callback mechanism instead of log parsing
+            # The contrastive_loss will update self.filtering_stats directly through the callback
+            
+            # Compute contrastive loss with potential filtering
+            # The callback will update self.filtering_stats
             cont_loss = self.contrastive_loss(
                 embeddings, 
                 pos_pairs.to(self.device), 
                 neg_pairs.to(self.device)
             )
+            
+            # Extract filtering stats from the callback-based tracking
+            filtered_pos = self.filtering_stats.get('filtered_pos_count', 0)
+            filtered_neg = self.filtering_stats.get('filtered_neg_count', 0)
+            total_pos_count = self.filtering_stats.get('total_pos_count', original_pos_count) 
+            total_neg_count = self.filtering_stats.get('total_neg_count', original_neg_count)
+            total_filtered = filtered_pos + filtered_neg
+            
+            # Log the filtering results
+            if filtered_pos > 0 or filtered_neg > 0:
+                logger.info(f"Contrastive loss filtered pairs - positive: {filtered_pos}/{total_pos_count}, negative: {filtered_neg}/{total_neg_count}")
+            
+            # Calculate filtering rates
+            filtered_rate = 100 * total_filtered / original_total_count if original_total_count > 0 else 0
+            pos_filtered_rate = 100 * filtered_pos / original_pos_count if original_pos_count > 0 else 0
+            neg_filtered_rate = 100 * filtered_neg / original_neg_count if original_neg_count > 0 else 0
+            
+            # Update batch metrics with more detailed filtering information
+            batch_metrics['filtered_pairs'] = total_filtered
+            batch_metrics['filtered_pos'] = filtered_pos
+            batch_metrics['filtered_neg'] = filtered_neg
+            
+            # Store these metrics directly in the overall train_stats for filtering capture
+            if 'filtering_details' not in self.train_stats:
+                self.train_stats['filtering_details'] = {
+                    'filtered_pos': [],
+                    'filtered_neg': [],
+                    'total_filtered': [],
+                    'pos_filtered_rate': [],
+                    'neg_filtered_rate': []
+                }
+                
+            # Append this batch's filtering metrics to the overall stats
+            self.train_stats['filtering_details']['filtered_pos'].append(filtered_pos)
+            self.train_stats['filtering_details']['filtered_neg'].append(filtered_neg)
+            self.train_stats['filtering_details']['total_filtered'].append(total_filtered)
+            self.train_stats['filtering_details']['pos_filtered_rate'].append(pos_filtered_rate)
+            self.train_stats['filtering_details']['neg_filtered_rate'].append(neg_filtered_rate)
+            
+            # Log filtering summary for diagnostic purposes
+            if filtered_pos > 0 or filtered_neg > 0:
+                logger.info(f"Contrastive loss filtered {total_filtered} pairs ({filtered_rate:.2f}%): {filtered_pos} positive, {filtered_neg} negative")
+                logger.info(f"Filtering rates - positive: {pos_filtered_rate:.2f}%, negative: {neg_filtered_rate:.2f}%")
             
             # Combine losses
             total_loss = feat_loss + struct_loss + cont_loss
@@ -569,16 +677,44 @@ class ISNETrainer:
                     if metrics['within_batch_rate'] else 0
                 avg_fallback_rate = sum(metrics['fallback_rate']) / len(metrics['fallback_rate']) \
                     if metrics['fallback_rate'] else 0
+                avg_filtered_rate = sum(metrics['filtered_rate']) / len(metrics['filtered_rate']) \
+                    if metrics['filtered_rate'] else 0
+                
+                # Calculate average filtering rates for positive and negative pairs
+                avg_pos_filtered_rate = sum(metrics['pos_filtered_rate']) / len(metrics['pos_filtered_rate']) \
+                    if metrics['pos_filtered_rate'] else 0
+                avg_neg_filtered_rate = sum(metrics['neg_filtered_rate']) / len(metrics['neg_filtered_rate']) \
+                    if metrics['neg_filtered_rate'] else 0
+                
                 total_pos_within = sum(metrics['pos_within_batch'])
                 total_pos_fallback = sum(metrics['pos_fallback'])
                 total_neg_within = sum(metrics['neg_within_batch'])
                 total_neg_fallback = sum(metrics['neg_fallback'])
+                # Get the filtered pair counts - try from direct filtering_details first, then fallback to batch metrics
+                if 'filtering_details' in self.train_stats:
+                    total_filtered = sum(self.train_stats['filtering_details']['total_filtered'])
+                    total_filtered_pos = sum(self.train_stats['filtering_details']['filtered_pos'])
+                    total_filtered_neg = sum(self.train_stats['filtering_details']['filtered_neg'])
+                    
+                    # Calculate additional filtered rates directly from the tracking data
+                    avg_pos_filtered_rate = sum(self.train_stats['filtering_details']['pos_filtered_rate']) / len(self.train_stats['filtering_details']['pos_filtered_rate']) \
+                        if self.train_stats['filtering_details']['pos_filtered_rate'] else 0
+                    avg_neg_filtered_rate = sum(self.train_stats['filtering_details']['neg_filtered_rate']) / len(self.train_stats['filtering_details']['neg_filtered_rate']) \
+                        if self.train_stats['filtering_details']['neg_filtered_rate'] else 0
+                else:
+                    # Fallback to batch metrics (less reliable)
+                    total_filtered = sum(metrics['filtered_pairs']) if 'filtered_pairs' in metrics else 0
+                    total_filtered_pos = sum(metrics['filtered_pos']) if 'filtered_pos' in metrics else 0
+                    total_filtered_neg = sum(metrics['filtered_neg']) if 'filtered_neg' in metrics else 0
                 total_pairs = total_pos_within + total_pos_fallback + total_neg_within + total_neg_fallback
                 
                 # Add the summary to train_stats
                 self.train_stats['batch_aware_summary'] = {
                     'avg_within_batch_rate': avg_within_batch_rate,
                     'avg_fallback_rate': avg_fallback_rate,
+                    'avg_filtered_rate': avg_filtered_rate,
+                    'avg_pos_filtered_rate': avg_pos_filtered_rate,
+                    'avg_neg_filtered_rate': avg_neg_filtered_rate,
                     'total_positive_pairs': {
                         'within_batch': total_pos_within,
                         'fallback': total_pos_fallback
@@ -587,9 +723,20 @@ class ISNETrainer:
                         'within_batch': total_neg_within,
                         'fallback': total_neg_fallback
                     },
+                    'filtered_pairs': {
+                        'total': total_filtered,
+                        'positive': total_filtered_pos,
+                        'negative': total_filtered_neg
+                    },
                     'efficiency': {
                         'within_batch_percentage': 100 * (total_pos_within + total_neg_within) / total_pairs 
-                        if total_pairs > 0 else 0
+                        if total_pairs > 0 else 0,
+                        'post_filtering_rate': 100 * total_filtered / total_pairs 
+                        if total_pairs > 0 else 0,
+                        'pos_filtering_rate': 100 * total_filtered_pos / total_pos_within 
+                        if total_pos_within > 0 else 0,
+                        'neg_filtering_rate': 100 * total_filtered_neg / total_neg_within 
+                        if total_neg_within > 0 else 0
                     }
                 }
                 
@@ -597,9 +744,21 @@ class ISNETrainer:
                 logger.info(f"Batch-aware sampling was used during training with:")
                 logger.info(f"  - Average within-batch pair rate: {avg_within_batch_rate:.2f}%")
                 logger.info(f"  - Average fallback pair rate: {avg_fallback_rate:.2f}%")
+                logger.info(f"  - Average filtered-by-loss rate: {avg_filtered_rate:.2f}%")
+                logger.info(f"  - Average positive filtering: {avg_pos_filtered_rate:.2f}%")
+                logger.info(f"  - Average negative filtering: {avg_neg_filtered_rate:.2f}%")
                 logger.info(f"  - Total positive pairs: {total_pos_within} in-batch, {total_pos_fallback} fallback")
                 logger.info(f"  - Total negative pairs: {total_neg_within} in-batch, {total_neg_fallback} fallback")
+                # Report detailed filtering metrics
+                logger.info(f"  - Total pairs filtered by loss: {total_filtered} ({total_filtered_pos} positive, {total_filtered_neg} negative)")
+                if total_pos_within > 0:
+                    pos_filter_pct = 100 * total_filtered_pos / total_pos_within
+                    logger.info(f"  - Positive pair filtering rate: {pos_filter_pct:.2f}% ({total_filtered_pos}/{total_pos_within})")
+                if total_neg_within > 0:
+                    neg_filter_pct = 100 * total_filtered_neg / total_neg_within
+                    logger.info(f"  - Negative pair filtering rate: {neg_filter_pct:.2f}% ({total_filtered_neg}/{total_neg_within})")
                 logger.info(f"  - Overall efficiency: {self.train_stats['batch_aware_summary']['efficiency']['within_batch_percentage']:.2f}% pairs within batch")
+                logger.info(f"  - Post-filtering rate: {self.train_stats['batch_aware_summary']['efficiency']['post_filtering_rate']:.2f}% pairs filtered by loss")
             else:
                 # Basic metrics if detailed tracking wasn't available
                 logger.info("Batch-aware sampling was used during training, which guarantees")

@@ -10,19 +10,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 
 class ContrastiveLoss(nn.Module):
-    """
-    Contrastive loss for ISNE training.
+    """Contrastive loss for ISNE as described in the original paper.
     
-    This loss function encourages embeddings of similar nodes to be close together
-    and embeddings of dissimilar nodes to be far apart in the embedding space,
-    helping to create more discriminative node representations.
+    This loss encourages similar nodes to have similar embeddings (positive pairs)
+    and dissimilar nodes to have different embeddings (negative pairs).
     """
     
     def __init__(
@@ -30,7 +28,8 @@ class ContrastiveLoss(nn.Module):
         margin: float = 1.0,
         reduction: str = 'mean',
         lambda_contrast: float = 1.0,
-        distance_metric: str = 'cosine'
+        distance_metric: str = 'cosine',
+        filter_callback: Optional[Callable[[int, int, int, int], None]] = None
     ) -> None:
         """
         Initialize the contrastive loss.
@@ -40,6 +39,8 @@ class ContrastiveLoss(nn.Module):
             reduction: Reduction method ('none', 'mean', 'sum')
             lambda_contrast: Weight factor for the contrastive loss
             distance_metric: Distance metric to use ('cosine', 'euclidean')
+            filter_callback: Optional callback function that will be called with filtering statistics
+                             Expected signature: callback(filtered_pos_count, total_pos_count, filtered_neg_count, total_neg_count)
         """
         super(ContrastiveLoss, self).__init__()
         
@@ -47,6 +48,7 @@ class ContrastiveLoss(nn.Module):
         self.reduction = reduction
         self.lambda_contrast = lambda_contrast
         self.distance_metric = distance_metric
+        self.filter_callback = filter_callback
     
     def _compute_distance(self, x1: Tensor, x2: Tensor) -> Tensor:
         """
@@ -115,6 +117,17 @@ class ContrastiveLoss(nn.Module):
         Returns:
             Contrastive loss
         """
+        # Initialize filtering statistics
+        filtered_pos_count = 0
+        total_pos_count = positive_pairs.size(0) if positive_pairs is not None else 0
+        filtered_neg_count = 0
+        total_neg_count = negative_pairs.size(0) if negative_pairs is not None else 0
+        
+        # Check for empty inputs
+        if total_pos_count == 0:
+            logger.warning("No positive pairs provided to contrastive loss")
+            return torch.tensor(0.0, device=embeddings.device)
+            
         # Log both embedding shape and pair counts for debugging
         pos_pair_count = positive_pairs.size(0) if positive_pairs is not None else 0
         neg_pair_count = negative_pairs.size(0) if negative_pairs is not None else 0
@@ -177,11 +190,14 @@ class ContrastiveLoss(nn.Module):
                 # Regular CPU operation
                 num_nodes = embeddings.size(0)
                 
-                # Validate and filter positive pairs
+                # More strict validation for positive pairs
                 valid_pos_mask = (positive_pairs[:, 0] < num_nodes) & (positive_pairs[:, 1] < num_nodes)
-                if not torch.all(valid_pos_mask):
-                    filtered_count = (~valid_pos_mask).sum().item()
-                    logger.warning(f"Filtered {filtered_count} out-of-bounds positive pairs")
+                
+                if not valid_pos_mask.all():
+                    filtered_pos_count = (~valid_pos_mask).sum().item()
+                    percentage = 100 * filtered_pos_count / total_pos_count
+                    logger.warning(f"Filtered {filtered_pos_count}/{total_pos_count} out-of-bounds positive pairs ({percentage:.1f}%)")
+                    # Filter positive pairs
                     positive_pairs = positive_pairs[valid_pos_mask]
                 
                 # Create fallback pairs if not enough valid pairs
@@ -224,13 +240,16 @@ class ContrastiveLoss(nn.Module):
                         (neg_pairs_cpu[:, 1] < num_nodes)
                     )
                     
+                    # total_neg_count was already initialized at the beginning of the method
+                    # Just ensure filtered_neg_count is correctly updated
+                    
                     if not torch.all(valid_neg_mask):
-                        filtered_count = (~valid_neg_mask).sum().item()
-                        total_count = neg_pairs_cpu.size(0)
-                        logger.warning(f"Filtered {filtered_count}/{total_count} out-of-bounds negative pairs ({filtered_count/total_count:.1%})")
+                        filtered_neg_count = (~valid_neg_mask).sum().item()
+                        percentage = 100 * filtered_neg_count / total_neg_count if total_neg_count > 0 else 0
+                        logger.warning(f"Filtered {filtered_neg_count}/{total_neg_count} out-of-bounds negative pairs ({percentage:.1f}%)")
                         
                         # Get some samples of invalid pairs for debugging
-                        if filtered_count > 0 and logger.isEnabledFor(logging.DEBUG):
+                        if filtered_neg_count > 0 and logger.isEnabledFor(logging.DEBUG):
                             invalid_pairs = neg_pairs_cpu[~valid_neg_mask]
                             sample_size = min(5, invalid_pairs.size(0))
                             sample_pairs = invalid_pairs[:sample_size]
@@ -255,22 +274,21 @@ class ContrastiveLoss(nn.Module):
                         (negative_pairs[:, 1] < num_nodes)
                     )
                     
+                    # total_neg_count was already initialized at the beginning of the method
+                    # Just ensure filtered_neg_count is correctly updated
+                    
                     if not torch.all(valid_neg_mask):
-                        filtered_count = (~valid_neg_mask).sum().item()
-                        total_count = negative_pairs.size(0)
-                        logger.warning(f"Filtered {filtered_count}/{total_count} out-of-bounds negative pairs ({filtered_count/total_count:.1%})")
+                        filtered_neg_count = (~valid_neg_mask).sum().item()
+                        percentage = 100 * filtered_neg_count / total_neg_count if total_neg_count > 0 else 0
+                        logger.warning(f"Filtered {filtered_neg_count}/{total_neg_count} out-of-bounds negative pairs ({percentage:.1f}%)")
                         
-                        # Log some details about the invalid pairs for debugging
-                        if filtered_count > 0 and logger.isEnabledFor(logging.DEBUG):
+                        # Get statistics on the out-of-bounds indices if we have debugging enabled
+                        if logger.isEnabledFor(logging.DEBUG):
                             invalid_pairs = negative_pairs[~valid_neg_mask]
-                            sample_size = min(5, invalid_pairs.size(0))
-                            sample_pairs = invalid_pairs[:sample_size]
-                            logger.debug(f"Sample invalid negative pairs: {sample_pairs}")
-                            
-                            # Get statistics on the out-of-bounds indices
-                            max_idx = torch.max(invalid_pairs).item()
-                            min_idx = torch.min(invalid_pairs).item()
-                            logger.debug(f"Invalid pairs index range: min={min_idx}, max={max_idx}, num_nodes={num_nodes}")
+                            if invalid_pairs.numel() > 0:
+                                max_idx = torch.max(invalid_pairs).item()
+                                min_idx = torch.min(invalid_pairs).item()
+                                logger.debug(f"Invalid pairs index range: min={min_idx}, max={max_idx}, num_nodes={num_nodes}")
                         
                         negative_pairs = negative_pairs[valid_neg_mask]
                     
@@ -300,10 +318,23 @@ class ContrastiveLoss(nn.Module):
                 # Only positive loss
                 combined_loss = pos_loss.mean()
             
-            # Apply weight factor
-            weighted_loss = self.lambda_contrast * combined_loss
+            # Total loss
+            total_loss = self.lambda_contrast * combined_loss
             
-            return weighted_loss
+            # Call the filter callback if provided
+            if self.filter_callback is not None:
+                # Use the collected filtering statistics
+                try:
+                    self.filter_callback(
+                        filtered_pos_count=filtered_pos_count,
+                        total_pos_count=total_pos_count,
+                        filtered_neg_count=filtered_neg_count, 
+                        total_neg_count=total_neg_count
+                    )
+                except Exception as e:
+                    logger.error(f"Error in contrastive loss filter callback: {e}")
+            
+            return total_loss
             
         except Exception as e:
             logger.warning(f"Error in contrastive loss computation: {str(e)}")
