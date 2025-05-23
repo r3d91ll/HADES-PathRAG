@@ -46,7 +46,15 @@ def get_extension_to_format_map() -> Dict[str, str]:
     # Load configuration
     try:
         config = load_config()
-        file_type_map = config["file_type_map"]
+        
+        # Safely access file_type_map, using DEFAULT_FILE_TYPE_MAP as fallback
+        if "file_type_map" in config:
+            file_type_map = config["file_type_map"]
+        else:
+            # Import the default map if config doesn't have it
+            from src.config.preprocessor_config import DEFAULT_FILE_TYPE_MAP
+            file_type_map = DEFAULT_FILE_TYPE_MAP
+            logger.warning("file_type_map not found in config, using defaults")
         
         # Build extension to format map (inverted from config)
         extension_map: Dict[str, str] = {}

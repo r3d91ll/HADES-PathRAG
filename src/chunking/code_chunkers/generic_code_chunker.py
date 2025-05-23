@@ -40,7 +40,7 @@ class GenericCodeChunker(BaseChunker):
         
         logger.info(f"Initialized GenericCodeChunker with max_size={self.max_chunk_size}, min_size={self.min_chunk_size}")
 
-    def chunk(self, text=None, content=None, doc_id=None, path="unknown", doc_type="code", max_tokens=None, output_format="json", **kwargs):
+    def chunk(self, content=None, text=None, doc_id=None, path="unknown", doc_type="code", max_tokens=None, output_format="json", **kwargs):
         """Chunk code content using generic code boundaries.
         
         Args:

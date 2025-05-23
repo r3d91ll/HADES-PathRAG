@@ -282,10 +282,24 @@ def process_document(args: Tuple[Path, Dict[str, Any], int]):
         doc_processor = init_docproc(config, worker_id)
         
         # Detect file format and content category using the new format detector
-        format_type = detect_format_from_path(file_path)
-        content_category = get_content_category(format_type)
-        
-        worker_logger.info(f"[Worker {worker_id}] Detected format '{format_type}' and category '{content_category}' for {file_path.name}")
+        try:
+            format_type = detect_format_from_path(file_path)
+            content_category = get_content_category(format_type)
+            worker_logger.info(f"[Worker {worker_id}] Detected format '{format_type}' and category '{content_category}' for {file_path.name}")
+        except ValueError as e:
+            # Skip unsupported file types gracefully
+            worker_logger.warning(f"[Worker {worker_id}] Skipping unsupported file: {file_path.name} - {str(e)}")
+            return {
+                "file_id": f"skipped_{file_path.name}",
+                "file_name": file_path.name,
+                "file_size": file_path.stat().st_size if file_path.exists() else 0,
+                "worker_id": worker_id,
+                "status": "skipped",
+                "reason": "unsupported_format",
+                "error": str(e),
+                "chunks": [],
+                "processing_time": 0
+            }
         
         # Prepare chunker config to limit chunk size for embedding compatibility
         chunker_config = {
@@ -558,9 +572,9 @@ class PipelineMultiprocessTester:
         self,
         test_data_dir: str,
         output_dir: str,
-        num_files: int = 20,
+        num_files: int = 50,
         max_workers: int = 4,
-        batch_size: int = 8
+        batch_size: int = 12
     ):
         """Initialize the multiprocessing pipeline tester."""
         self.test_data_dir = Path(test_data_dir)
@@ -597,18 +611,55 @@ class PipelineMultiprocessTester:
         from src.docproc.utils.format_detector import get_extension_to_format_map
         extension_map = get_extension_to_format_map()
         
-        # Use extension map to find all supported file types
-        for extension in extension_map.keys():
-            # Remove the leading dot for the glob pattern, use ** for recursive search
-            pattern = f"**/*{extension}"
-            files = list(self.test_data_dir.glob(pattern))
-            supported_files.extend(files)
-            
-            # Log the file types found
-            if files:
-                format_type = extension_map[extension]
+        # First, find all files recursively
+        all_files = list(self.test_data_dir.glob("**/*"))
+        all_files = [f for f in all_files if f.is_file()]
+        file_count = len(all_files)
+        logger.info(f"Found {file_count} total files in {self.test_data_dir}")
+        
+        # Create a set of supported extensions from our format detector
+        supported_extensions = set(extension_map.keys())
+        logger.info(f"Supporting {len(supported_extensions)} file extensions: {', '.join(sorted(supported_extensions))}")
+        
+        # Only include files with supported extensions
+        for file_path in all_files:
+            ext = file_path.suffix.lower()
+            if ext in supported_extensions:
+                supported_files.append(file_path)
+                format_type = extension_map[ext]
                 content_category = get_content_category(format_type)
-                logger.info(f"Found {len(files)} {extension} files (format: {format_type}, category: {content_category})")
+                logger.debug(f"Including {file_path.name} ({format_type}, {content_category})")
+                
+        # Group supported files by extension for logging
+        by_extension = {}
+        for file_path in supported_files:
+            ext = file_path.suffix.lower()
+            if ext not in by_extension:
+                by_extension[ext] = []
+            by_extension[ext].append(file_path)
+            
+        # Log counts by extension
+        for ext, files in by_extension.items():
+            format_type = extension_map[ext]
+            content_category = get_content_category(format_type)
+            logger.info(f"Found {len(files)} {ext} files (format: {format_type}, category: {content_category})")
+            
+        # Log summary
+        if file_count > 0:
+            logger.info(f"Including {len(supported_files)} of {file_count} files ({len(supported_files)/file_count*100:.1f}%)")
+            logger.info(f"Excluding {file_count - len(supported_files)} unsupported files")
+        else:
+            logger.error(f"No files found in {self.test_data_dir}. Check if the path is correct and accessible.")
+            logger.info(f"Absolute path: {Path(self.test_data_dir).absolute()}")
+            # List parent directory to help diagnose the issue
+            parent_dir = Path(self.test_data_dir).parent
+            logger.info(f"Contents of parent directory {parent_dir}:")
+            for item in parent_dir.iterdir():
+                if item.is_dir():
+                    logger.info(f"  DIR: {item.name}")
+                else:
+                    logger.info(f"  FILE: {item.name}")
+
 
                 
         # Group files by directory
@@ -1722,11 +1773,11 @@ def main():
     common_group = parser.add_argument_group('Common Options')
     common_group.add_argument('--workers', type=int, default=4,
                         help='Number of worker processes')
-    common_group.add_argument('--files', type=int, default=10,
+    common_group.add_argument('--files', type=int, default=50,
                         help='Maximum number of files to process')
-    common_group.add_argument('--data-dir', type=str, default='./test-data',
+    common_group.add_argument('--data-dir', type=str, default='./test3',
                         help='Directory containing test data')
-    common_group.add_argument('--output-dir', type=str, default='./test-output/pipeline-mp-test',
+    common_group.add_argument('--output-dir', type=str, default='./test-output/isne-training-dataset',
                         help='Directory for test output')
     
     # Legacy support
