@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 # Initialize mimetypes
 mimetypes.init()
 
-# Cache for file type mappings
+# Caches for mappings
 _extension_to_format_map: Optional[Dict[str, str]] = None
+_format_to_category_map: Optional[Dict[str, str]] = None
 
 
 def get_extension_to_format_map() -> Dict[str, str]:
@@ -75,6 +76,95 @@ def get_extension_to_format_map() -> Dict[str, str]:
         return default_map
 
 
+def get_format_to_category_map() -> Dict[str, str]:
+    """
+    Get a mapping from format types to content categories ('code' or 'text').
+    
+    This function loads the mapping from the central configuration and caches
+    the result for performance.
+    
+    Returns:
+        Dictionary mapping format types to content categories
+    """
+    global _format_to_category_map
+    
+    # Use cached value if available
+    if _format_to_category_map is not None:
+        logger.debug(f"Using cached format-to-category map: {_format_to_category_map}")
+        return _format_to_category_map
+    
+    # Load configuration
+    try:
+        config = load_config()
+        categories = config.get("content_categories", {})
+        
+        logger.info(f"Loaded content categories from config: {categories}")
+        
+        # Build format to category map
+        format_category_map: Dict[str, str] = {}
+        
+        # Process each category and its formats
+        for category, formats in categories.items():
+            for format_type in formats:
+                format_category_map[format_type] = category
+                logger.debug(f"Mapped format '{format_type}' to category '{category}'")
+        
+        logger.info(f"Created format-to-category map with {len(format_category_map)} entries")
+        
+        # Cache for future use
+        _format_to_category_map = format_category_map
+        return format_category_map
+        
+    except Exception as e:
+        logger.warning(f"Error loading content category map: {e}")
+        # Fallback to basic categorization
+        return {
+            "python": "code",
+            "json": "code",
+            "yaml": "code",
+            "xml": "code",
+            "toml": "code",
+            "markdown": "text",
+            "pdf": "text",
+            "csv": "text",
+            "text": "text",
+            "docx": "text",
+            "xlsx": "text",
+            "pptx": "text"
+        }
+
+
+def get_content_category(format_type: str) -> str:
+    """
+    Get the content category ('code' or 'text') for a given format type.
+    
+    Args:
+        format_type: The format type string (e.g., 'python', 'pdf')
+        
+    Returns:
+        Content category as a string ('code' or 'text')
+    """
+    category_map = get_format_to_category_map()
+    return category_map.get(format_type, "text")
+
+
+def detect_format(file_path: Union[str, Path]) -> str:
+    """
+    Detect the format of a document file.
+    
+    This is a convenience wrapper around detect_format_from_path that handles
+    both string paths and Path objects.
+    
+    Args:
+        file_path: Path to the document file (string or Path object)
+    
+    Returns:
+        Detected format as a string
+    """
+    path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+    return detect_format_from_path(path_obj)
+
+
 def detect_format_from_path(file_path: Path) -> str:
     """
     Detect document format based on file extension.
@@ -105,6 +195,11 @@ def detect_format_from_path(file_path: Path) -> str:
         if "pytest" in str(file_path) or "unittest" in str(file_path):
             return "text"
         raise ValueError(f"Cannot determine format for file with no extension: {file_path}")
+    
+    # Special case for Python files - handle them directly with dedicated adapter
+    if ext == ".py":
+        logger.debug(f"Detected Python file: {file_path}")
+        return "python"
     
     # Get extension-to-format mapping from configuration
     extension_map = get_extension_to_format_map()

@@ -63,9 +63,14 @@ from typing import Dict, Any, Optional, Union, List, Callable, cast
 
 from pydantic import ValidationError
 
-from .utils.format_detector import detect_format_from_path
+from src.docproc.utils.format_detector import (
+    detect_format,
+    detect_format_from_path, 
+    get_content_category
+)
 from .utils.metadata_extractor import extract_metadata
 from .adapters.registry import get_adapter_for_format
+from .adapters.adapter_selector import select_adapter_for_document
 from .schemas.utils import validate_document, add_validation_to_adapter
 from .schemas.base import BaseDocument
 
@@ -108,7 +113,13 @@ def process_document(file_path: Union[str, Path], options: Optional[Dict[str, An
             "content": "Extracted text content of the document",
             "path": "/absolute/path/to/source/file.ext",
             "format": "detected-format",
+            "content_category": "code" or "text",
             "metadata": {
+                "filename": "file_name.ext",
+                "file_type": "detected-format",
+                "content_category": "code" or "text",
+                "last_modified": "2025-05-15T10:00:00Z",
+                "size": 1024,
                 "title": "Document Title",
                 "author": "Document Author",
                 "created_at": "2025-05-15T10:00:00Z",
@@ -159,18 +170,32 @@ def process_document(file_path: Union[str, Path], options: Optional[Dict[str, An
     if not path_obj.exists():
         raise FileNotFoundError(f"File not found: {path_obj}")
     
-    # Detect the document format
+    # Detect document format and content category
     format_type = detect_format_from_path(path_obj)
+    content_category = get_content_category(format_type)
     
-    # Get the appropriate adapter
-    adapter = get_adapter_for_format(format_type)
+    # Log the detected format and category for debugging
+    logger.debug(f"Detected format {format_type} (category: {content_category}) for file {path_obj}")
+    
+    # Select the appropriate adapter based on content category
+    adapter = select_adapter_for_document(format_type)
+    
+    # Log content category and adapter selection
+    logger.info(f"Processing {path_obj} as {content_category} content with {adapter.__class__.__name__}")
     
     # Process the document
     processed_doc = adapter.process(path_obj, options)
     
+    # Add content category to document structure
+    processed_doc["content_category"] = content_category
+    
     # Enrich with metadata using our heuristic extraction
     content = processed_doc.get("content", "")
     metadata = extract_metadata(content, str(path_obj), format_type)
+    
+    # Add file type and content category to metadata
+    metadata["file_type"] = format_type
+    metadata["content_category"] = content_category
     
     # Merge extracted metadata with any existing metadata
     existing_metadata = processed_doc.get("metadata", {})
@@ -282,11 +307,24 @@ def process_text(text: str, format_type: str = "text", format_or_options: Option
         actual_format = format_type
         actual_options = options or {}
     
-    # Get the appropriate adapter
+    # Get the adapter for the specified format
     adapter = get_adapter_for_format(actual_format)
     
-    # Process the text
-    processed_doc = adapter.process_text(text, actual_options)
+    # Detect the content category for the format
+    content_category = get_content_category(actual_format)
+    logger.debug(f"Using format {actual_format} (category: {content_category}) for text processing")
+    
+    # Process the text with the appropriate adapter
+    processed_doc = adapter.process_text(text, options=actual_options)
+    
+    # Add content category to document structure
+    processed_doc["content_category"] = content_category
+    
+    # Add file type and content category to metadata
+    if "metadata" not in processed_doc:
+        processed_doc["metadata"] = {}
+    processed_doc["metadata"]["file_type"] = actual_format
+    processed_doc["metadata"]["content_category"] = content_category
     
     # Enrich with metadata using our heuristic extraction
     content = processed_doc.get("content", "")
@@ -333,6 +371,29 @@ def get_format_for_document(file_path: Union[str, Path]) -> str:
         raise FileNotFoundError(f"File not found: {path_obj}")
     
     # Delegate to the utility function
+    return detect_format_from_path(path_obj)
+
+
+def get_format_for_document(file_path: Union[str, Path]) -> str:
+    """
+    Get the format for a document file.
+    
+    Args:
+        file_path: Path to the document file
+    
+    Returns:
+        Detected format as a string
+    
+    Raises:
+        FileNotFoundError: If the file does not exist
+    """
+    path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+    
+    # Check if file exists
+    if not path_obj.exists():
+        raise FileNotFoundError(f"File not found: {path_obj}")
+    
+    # Detect format
     return detect_format_from_path(path_obj)
 
 

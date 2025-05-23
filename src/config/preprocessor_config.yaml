@@ -7,18 +7,33 @@ exclude_patterns:
   - .git
 recursive: true
 max_workers: 12
+# File type mapping and categorization
+# Each file type is mapped to its extensions and categorized as either 'code' or 'text'
 file_type_map:
+  # Code formats (processed with AST/symbol table methods)
   python: ['.py']
   # javascript: ['.js', '.jsx', '.ts', '.tsx']
   # java: ['.java']
   # cpp: ['.cpp', '.hpp', '.cc', '.h']
+  json: ['.json']
+  yaml: ['.yaml', '.yml']
+  xml: ['.xml']
+  toml: ['.toml']
+  
+  # Text formats (processed with docling/chonky methods)
   markdown: ['.md', '.markdown']
   pdf: ['.pdf']
-  json: ['.json']
   csv: ['.csv']
   text: ['.txt']
   # html: ['.html', '.htm']
-  xml: ['.xml']
+  docx: ['.docx']
+  xlsx: ['.xlsx']
+  pptx: ['.pptx']
+
+# Content category mapping
+content_categories:
+  code: ['python', 'json', 'yaml', 'xml', 'toml']
+  text: ['markdown', 'pdf', 'csv', 'text', 'docx', 'xlsx', 'pptx']
 
 # Format-specific processing options
 preprocessor_config:

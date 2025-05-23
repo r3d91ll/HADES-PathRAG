@@ -15,10 +15,12 @@ from .base import (
     register_adapter,
 )
 from .batch import batch_embed
+from .registry import get_adapter_by_name
 
 __all__: list[str] = [
     "EmbeddingAdapter",
     "EmbeddingVector",
+    "get_adapter_by_name",
     "get_adapter",
     "register_adapter",
     "batch_embed",

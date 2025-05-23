@@ -1,12 +1,16 @@
-"""ModernBERT adapter for embedding generation using Haystack.
+"""Encoder adapter for embedding generation using Haystack.
 
 This module provides an implementation of the EmbeddingAdapter protocol
-that uses Haystack to manage and run the ModernBERT model for high-quality,
-long-context embeddings. It supports both CPU and GPU configurations through
+that uses encoder models (like ModernBERT, CodeBERT) to convert text into
+vector embeddings. It supports both CPU and GPU configurations through
 the embedding_config.yaml configuration file.
 
-The adapter is designed to work with the default Haystack model engine infrastructure,
-allowing resource management through configuration rather than code changes.
+The adapter is designed to work with any HuggingFace encoder model and can be
+configured to use different models based on the content type or project requirements.
+
+Supported models include:
+- ModernBERT: Optimized for general text (answerdotai/ModernBERT-base)
+- CodeBERT: Optimized for code and technical documentation (microsoft/codebert-base)
 """
 
 from __future__ import annotations
@@ -21,7 +25,8 @@ import torch
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 # Local imports
-from src.embedding.base import EmbeddingAdapter, register_adapter, EmbeddingVector
+from src.embedding.base import EmbeddingAdapter, EmbeddingVector
+from src.embedding.registry import register_adapter
 from src.model_engine.engines.haystack import HaystackModelEngine
 from transformers import AutoModel, AutoTokenizer
 from src.config.embedding_config import get_adapter_config, load_config
@@ -33,8 +38,15 @@ PoolingStrategy = Literal["cls", "mean", "max"]
 
 logger = logging.getLogger(__name__)
 
-class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
-    """Adapter for generating embeddings using ModernBERT via Haystack."""
+class EncoderEmbeddingAdapter(EmbeddingAdapter):
+    """Adapter for generating embeddings using encoder models via Haystack.
+    
+    This adapter can be configured to use different encoder models like:
+    - ModernBERT (answerdotai/ModernBERT-base): Good for general text content
+    - CodeBERT (microsoft/codebert-base): Optimized for code and technical documentation
+    
+    The model is specified via configuration or constructor parameters.
+    """
     
     def __init__(
         self,
@@ -44,16 +56,16 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         batch_size: Optional[int] = None,
         normalize_embeddings: Optional[bool] = None,
         device: Optional[str] = None,
-        adapter_name: str = "modernbert",
+        adapter_name: str = "transformer",
         **kwargs: Any
     ) -> None:
-        """Initialize the ModernBERT embedding adapter using configuration.
+        """Initialize the transformer embedding adapter using configuration.
         
         This constructor loads settings from the embedding_config.yaml file,
         while allowing parameter overrides through constructor arguments.
         
         Args:
-            model_name: Override the model name from config
+            model_name: Override the model name from config (e.g., 'microsoft/codebert-base')
             max_length: Override the max sequence length from config
             pooling_strategy: Override the pooling strategy from config (cls, mean, max)
             batch_size: Override the batch size from config
@@ -66,7 +78,9 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         config = get_adapter_config(adapter_name=adapter_name)
         
         # Set parameters, allowing constructor arguments to override config
-        self.model_name: str = model_name or config.get("model_name", "answerdotai/ModernBERT-base")
+        # Default model depends on adapter_name if specified
+        default_model = "microsoft/codebert-base" if adapter_name == "codebert" else "answerdotai/ModernBERT-base"
+        self.model_name: str = model_name or config.get("model_name", default_model)
         self.max_length: int = max_length or config.get("max_length", 8192)
         self.pooling_strategy: PoolingStrategy = pooling_strategy or config.get("pooling_strategy", "cls")
         self.batch_size: int = batch_size or config.get("batch_size", 8)
@@ -169,6 +183,66 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
             return device
     
     @property
+    async def _ensure_model_loaded(self) -> None:
+        """Ensure the encoder model is loaded."""
+        if self._model is None:
+            try:
+                # Determine model type for better logging
+                model_type = "CodeBERT" if "codebert" in self.model_name.lower() else "ModernBERT"
+                
+                # Check available GPU memory before loading
+                effective_device = self.device
+                if torch.cuda.is_available() and not self.force_cpu and "cuda" in self.device:
+                    try:
+                        # Check memory availability on the target GPU
+                        device_idx = int(self.device.split(":")[1]) if ":" in self.device else 0
+                        free_memory = torch.cuda.mem_get_info(device_idx)[0] / (1024 ** 3)  # Free memory in GB
+                        self.logger.info(f"Available GPU memory before loading {model_type}: {free_memory:.2f} GB")
+                        if free_memory < 1.0:  # Less than 1GB available
+                            self.logger.warning(f"Low GPU memory ({free_memory:.2f} GB). Forcing CPU mode for {model_type}.")
+                            effective_device = "cpu"
+                    except Exception as e:
+                        self.logger.warning(f"Couldn't check GPU memory: {e}. Using configured device: {self.device}")
+                elif not torch.cuda.is_available() and "cuda" in self.device:
+                    self.logger.warning(f"CUDA not available, falling back to CPU for {model_type}")
+                    effective_device = "cpu"
+                
+                # Load tokenizer
+                self._tokenizer = await run_in_threadpool(
+                    AutoTokenizer.from_pretrained, self.model_name
+                )
+                self.logger.info(f"{model_type} tokenizer loaded successfully")
+                
+                # Load model with memory efficiency options
+                if effective_device == "cpu":
+                    # Use lower precision for CPU to save memory
+                    self._model = await run_in_threadpool(
+                        lambda: AutoModel.from_pretrained(
+                            self.model_name,
+                            low_cpu_mem_usage=True
+                        )
+                    )
+                else:
+                    # Use half precision for GPU to save memory
+                    self._model = await run_in_threadpool(
+                        lambda: AutoModel.from_pretrained(
+                            self.model_name,
+                            torch_dtype=torch.float16,
+                            low_cpu_mem_usage=True
+                        )
+                    )
+                
+                # Move to target device and set to evaluation mode
+                self._model = self._model.to(effective_device)
+                self._model.eval()
+                self.logger.info(f"{model_type} model loaded successfully on {effective_device}")
+                self._model_loaded = True
+                
+            except Exception as e:
+                self.logger.error(f"Error loading {model_type if 'model_type' in locals() else 'encoder'} model: {e}")
+                raise RuntimeError(f"Failed to load model {self.model_name}: {e}") from e
+    
+    @property
     def engine(self) -> HaystackModelEngine:
         """Lazy-load the Haystack engine when first needed."""
         if self._engine is None:
@@ -229,30 +303,57 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
             # Load model if not already loaded
             if not hasattr(self, '_model') or self._model is None:
                 self._model = AutoModel.from_pretrained(self.model_name)
-
-            # Check if the device is actually available before moving the model
-            if effective_device.startswith('cuda:'):
-                device_idx = int(effective_device.split(':')[1])
-                available_count = torch.cuda.device_count()
-                
-                if device_idx >= available_count:
-                    logger.warning(f"Device {effective_device} not available, falling back to CPU. "
-                                  f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')}")
-                    effective_device = 'cpu'
-
-            # Move to device
-            self._model = self._model.to(effective_device)
-
-            # Set model to evaluation mode
-            self._model.eval()
+                self._model.to(effective_device)
+                self._model.eval()  # Set to evaluation mode
+                logger.info("ModernBERT model loaded successfully")
+            
             self._model_loaded = True
-            logger.info(f"ModernBERT model loaded successfully on {effective_device}")
+            
         except Exception as e:
             logger.error(f"Failed to load ModernBERT model: {e}")
-            raise RuntimeError(f"Failed to load ModernBERT model: {e}") from e
+            raise RuntimeError(f"Model loading failed: {e}") from e
+            
+    # This commented-out code appears to be from initialization and should be in __init__
+    # It's removed here to fix the syntax error
     
+    # Helper method to load model when needed
+    async def _load_model(self):
+        """Load the encoder model and tokenizer.
+        
+        This helper method ensures proper loading of the model with appropriate
+        error handling.
+        """
+        await self._ensure_model_loaded()
+        logger.info(
+            f"Initialized ModernBERT adapter with model={self.model_name}, "
+            f"device={self.adjusted_device}, pooling={self.pooling_strategy}"
+        )
+        
+    # Define a property to check if we need to unload the model
+    @property
+    def should_unload_model(self) -> bool:
+        """Check if the model should be unloaded to free memory."""
+        return getattr(self, "_model_unloaded", True)
+    
+    def _get_pipeline_device(self, component_name: str) -> Optional[str]:
+        """Get the device configuration for a specific component from the pipeline config.
+        
+        Args:
+            component_name: Name of the component (e.g., 'embedding', 'chunking', 'docproc')
+            
+        Returns:
+            The configured device string or None if not configured/available
+        """
+        try:
+            # Import here to avoid circular imports
+            from src.config.config_loader import get_component_device
+            return get_component_device(component_name)
+        except (ImportError, AttributeError) as e:
+            logger.debug(f"Could not get pipeline device: {e}")
+            return None
+        
     async def _get_embeddings_from_model(self, texts: List[str]) -> List[EmbeddingVector]:
-        """Generate embeddings directly using the ModernBERT model.
+        """Generate embeddings directly using the transformer model.
         
         This method directly interfaces with the transformer model to generate embeddings,
         rather than using the Haystack embedding calculation function. This approach ensures
@@ -267,6 +368,7 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         Raises:
             RuntimeError: If the embedding generation fails
         """
+
         if not self._model_loaded:
             await self._ensure_model_loaded()
         
@@ -280,12 +382,24 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
                 logger.debug(f"Processing batch {i//self.batch_size + 1} with {len(batch_texts)} texts")
                 
                 with torch.no_grad():
-                    # Tokenize the input texts
+                    # Tokenize inputs with explicit truncation
+                    # Most BERT models have a max sequence length of 512
+                    max_length = 512
+                    if 'bert-base' in self.model_name.lower():
+                        max_length = 512
+                    elif 'codebert' in self.model_name.lower():
+                        max_length = 512
+                    
+                    # Log the truncation happening
+                    if any(len(self._tokenizer.encode(text)) > max_length for text in batch_texts):
+                        logger.warning(f"Some texts exceed the maximum sequence length of {max_length} tokens for model {self.model_name}. Truncating.")
+                    
+                    # Apply truncation and padding
                     encoding = self._tokenizer(
                         batch_texts,
                         padding=True,
                         truncation=True,
-                        max_length=self.max_length,
+                        max_length=max_length,
                         return_tensors="pt"
                     )
                     
@@ -328,11 +442,11 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
             
             logger.info(f"Generated {len(all_embeddings)} embeddings with dimension {len(all_embeddings[0]) if all_embeddings else 0}")
             return cast(List[EmbeddingVector], all_embeddings)
-            
+        
         except Exception as e:
             logger.error(f"ModernBERT embedding generation failed: {e}")
             raise RuntimeError(f"Failed to generate embeddings: {e}") from e
-    
+
     async def embed(self, texts: List[str], **kwargs: Any) -> List[EmbeddingVector]:
         """Generate embeddings for a list of texts using ModernBERT.
         
@@ -368,7 +482,7 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
             results.extend(batch_results)
         
         return results
-    
+
     async def embed_single(self, text: str, **kwargs: Any) -> EmbeddingVector:
         """Generate an embedding for a single text using ModernBERT.
         
@@ -388,5 +502,8 @@ class ModernBERTEmbeddingAdapter(EmbeddingAdapter):
         return results[0]
 
 
-# Register the adapter
-register_adapter("modernbert", ModernBERTEmbeddingAdapter)
+# Register the adapter for different model types
+register_adapter("modernbert", EncoderEmbeddingAdapter) # For general text documents
+register_adapter("codebert", EncoderEmbeddingAdapter)  # For code repositories
+register_adapter("python_code_bert", EncoderEmbeddingAdapter)  # For Python code specifically
+register_adapter("encoder", EncoderEmbeddingAdapter)  # Generic name

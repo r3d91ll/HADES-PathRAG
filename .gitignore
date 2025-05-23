@@ -125,3 +125,5 @@ test-data/*.pdf
 test-output/*
 .coveragerc
 test-data2/*
+models/isne/isne_model_v1*
+models/isne/simplified_isne_model.pt

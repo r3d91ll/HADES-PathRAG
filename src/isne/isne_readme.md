@@ -124,6 +124,32 @@ trainer.train(
 trainer.save_model("path/to/model.pt")
 ```
 
+### Simplified Training for Development
+
+A simplified ISNE training approach has been implemented specifically for development and testing scenarios where graph construction might be problematic:
+
+```python
+# Using the simplified ISNE training approach
+from tests.integration.pipeline_multiprocess_test import PipelineMultiprocessTest
+
+# Initialize test with custom configuration
+test = PipelineMultiprocessTest(config_path="config/test_config.yaml")
+
+# Process documents and prepare them for ISNE
+documents = test.process_documents(input_path)
+doc_list = test.prepare_documents_for_isne(documents)
+
+# Use simplified ISNE training that avoids graph construction issues
+results = test.simplified_isne_training(doc_list)
+```
+
+This simplified approach:
+- Bypasses the complex graph construction process
+- Uses a linear projection model that preserves cosine similarities
+- Processes embeddings directly without requiring a graph structure
+- Provides faster training times for development iterations
+- Is particularly useful when working with small document sets or when testing CodeBERT integration
+
 ## Testing
 
 Following the project's standard protocol, this module includes comprehensive testing:

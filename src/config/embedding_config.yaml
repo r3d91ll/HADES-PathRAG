@@ -1,11 +1,23 @@
 # Embedding Configuration for HADES-PathRAG
 version: 1
 
-# Default adapter to use
+# Content type settings
+# Choose which model to use based on content type
+
+# Default adapter to use for general content (literature, PDFs, etc.)
 default_adapter: "modernbert"
+
+# For code repositories, you can choose one of these:
+# - "codebert": Microsoft's CodeBERT (based on RoBERTa, token limit: 512)
+# - "python_code_bert": ModernBERT fine-tuned for Python code (higher token limit)
+# 
+# Uncomment one of these lines when processing code repositories:
+# default_adapter: "codebert"
+# default_adapter: "python_code_bert"
 
 # Adapter configurations
 adapters:
+  # CPU-optimized embedding model for resource-constrained environments
   cpu:
     type: "cpu"
     config:
@@ -13,26 +25,61 @@ adapters:
       pooling_strategy: "mean"
       device: "cpu"
       
+  # General text encoder (ModernBERT)
   modernbert:
-    type: "modernbert"
+    type: "encoder"
     config:
       model_name: "answerdotai/ModernBERT-base"
+      pooling_strategy: "cls"
+      device: "cpu"
+      use_model_engine: true
+      batch_size: 8
+      
+  # Code repository encoder (CodeBERT)
+  codebert:
+    type: "encoder"
+    config:
+      model_name: "microsoft/codebert-base"
+      pooling_strategy: "cls"
+      device: "cpu"
+      use_model_engine: true
+      batch_size: 8
+      max_length: 512  # RoBERTa-based models have this limitation
+      
+  # Python-specific code encoder (ModernBERT variant fine-tuned for code)
+  python_code_bert:
+    type: "encoder"
+    config:
+      model_name: "juanwisz/modernbert-python-code-retrieval"
+      pooling_strategy: "cls"
+      device: "cpu"
+      use_model_engine: true
+      batch_size: 8
+      
+  # GPU versions (for inference or when resource constraints aren't an issue)
+  gpu_encoder:
+    type: "encoder"
+    config:
+      # This can be changed to either ModernBERT or CodeBERT depending on content type
+      model_name: "answerdotai/ModernBERT-base"  # or "microsoft/codebert-base"
+      pooling_strategy: "cls"
+      device: "cuda:0"
+      use_model_engine: true
+      batch_size: 16
+      
+  codebert:
+    type: "codebert"
+    config:
+      model_name: "microsoft/codebert-base"
       pooling_strategy: "cls"
       # Set to CPU for resource efficiency in ingestion pipeline
       device: "cpu"
       use_model_engine: true
       batch_size: 8
       
-  modernbert_gpu:
-    type: "modernbert"
-    config:
-      model_name: "answerdotai/ModernBERT-base"
-      pooling_strategy: "cls"
-      device: "cuda:0"
-      use_model_engine: true
-      batch_size: 16
+# Base configurations
 
-# Base configuration for CPU adapter
+# CPU adapter for lightweight embedding
 cpu:
   model_name: "all-MiniLM-L6-v2"
   max_length: 512
@@ -41,10 +88,10 @@ cpu:
   batch_size: 32
   device: "cpu"
 
-# Base configuration for ModernBERT adapter
-modernbert:
-  model_name: "answerdotai/ModernBERT-base"
-  max_length: 8192
+# Encoder adapter settings (shared by encoder models)
+encoder:
+  # These are the default settings for all encoder models
+  max_length: 8192  # Default for ModernBERT variants
   pooling_strategy: "cls"
   normalize_embeddings: true
   batch_size: 8
@@ -56,3 +103,18 @@ modernbert:
   early_availability_check: true
   auto_start_engine: true
   max_startup_retries: 3
+  
+  # Model-specific settings (used by adapter registration in encoder_adapter.py)
+  models:
+    modernbert:
+      model_name: "answerdotai/ModernBERT-base"
+      description: "General text encoder model"
+    
+    codebert:
+      model_name: "microsoft/codebert-base"
+      description: "Code-optimized encoder model"
+      max_length: 512  # Limited by RoBERTa architecture
+      
+    python_code_bert:
+      model_name: "juanwisz/modernbert-python-code-retrieval"
+      description: "Python-specific code encoder based on ModernBERT"

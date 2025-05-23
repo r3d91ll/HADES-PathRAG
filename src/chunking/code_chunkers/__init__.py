@@ -1,20 +1,27 @@
 """Code chunkers package.
 
 Exports a single helper ``chunk_code`` that selects the appropriate
-chunking strategy for a given language.  Today we only implement the
-Python AST-based splitter, but the dispatcher pattern allows easy
-extension to other languages (e.g., JavaScript, Java) later.
+chunking strategy for a given language. Supports Python, YAML, and JSON
+with specialized chunkers that preserve the structure of each format.
+
+Each chunker uses AST-based or structure-aware parsing to create semantic chunks
+that represent meaningful elements within the code.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Union
 
 from .ast_chunker import chunk_python_code
+from .python_chunker import PythonCodeChunker
+from .yaml_chunker import YAMLCodeChunker
+from .json_chunker import JSONCodeChunker
 
 
 # Language dispatcher mapping
 _LANG_DISPATCH = {
     "python": chunk_python_code,
+    "yaml": YAMLCodeChunker,
+    "json": JSONCodeChunker,
     # Future languages can be added here
     # "javascript": chunk_js_code,
 }

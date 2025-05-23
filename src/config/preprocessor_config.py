@@ -23,10 +23,18 @@ DEFAULT_FILE_TYPE_MAP: Dict[str, List[str]] = {
     'markdown': ['.md', '.markdown'],
     'pdf': ['.pdf'],
     'json': ['.json'],
+    'yaml': ['.yaml', '.yml'],
     'csv': ['.csv'],
     'text': ['.txt'],
     'html': ['.html', '.htm'],
     'xml': ['.xml'],
+    'toml': ['.toml'],
+}
+
+# Default content categories
+DEFAULT_CONTENT_CATEGORIES: Dict[str, List[str]] = {
+    'code': ['python', 'javascript', 'java', 'cpp', 'json', 'yaml', 'xml', 'toml'],
+    'text': ['markdown', 'pdf', 'csv', 'text', 'html', 'docx', 'xlsx', 'pptx'],
 }
 
 DEFAULT_PREPROCESSOR_CONFIG: Dict[str, Dict[str, Any]] = {
@@ -109,13 +117,28 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> PreProcessorC
     if 'options' in user_config and isinstance(user_config['options'], dict):
         options = dict(user_config['options'])
     
+    # Ensure the file_type_map exists with sensible defaults
+    if 'file_type_map' not in user_config:
+        file_type_map = DEFAULT_FILE_TYPE_MAP
+    else:
+        # Merge with defaults, preferring loaded config
+        merged_map = DEFAULT_FILE_TYPE_MAP.copy()
+        merged_map.update(user_config['file_type_map'])
+        file_type_map = merged_map
+
+    # Ensure the content_categories exist with sensible defaults
+    if 'content_categories' not in user_config:
+        content_categories = DEFAULT_CONTENT_CATEGORIES
+    else:
+        # Merge with defaults, preferring loaded config
+        merged_categories = DEFAULT_CONTENT_CATEGORIES.copy()
+        merged_categories.update(user_config['content_categories'])
+        content_categories = merged_categories
+
     # Handle nested dictionaries
-    file_type_map: Dict[str, List[str]] = dict(DEFAULT_FILE_TYPE_MAP)
-    if 'file_type_map' in user_config and isinstance(user_config['file_type_map'], dict):
-        # Merge file type map
-        for key, value in user_config['file_type_map'].items():
-            if isinstance(value, list):
-                file_type_map[key] = list(value)
+    for key, value in user_config.get('file_type_map', {}).items():
+        if isinstance(value, list):
+            file_type_map[key] = list(value)
     
     preprocessor_config: Dict[str, Dict[str, Any]] = dict(DEFAULT_PREPROCESSOR_CONFIG)
     if 'preprocessor_config' in user_config and isinstance(user_config['preprocessor_config'], dict):
@@ -149,18 +172,18 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> PreProcessorC
     chunking_preparation = cast(ChunkingPreparationConfig, chunking_preparation_dict)
 
     # Build PreProcessorConfig TypedDict
-    result = PreProcessorConfig(
-        input_dir=Path(user_config.get('input_dir', '.')),
-        output_dir=Path(user_config.get('output_dir', user_config.get('input_dir', '.') + '/.symbol_table')),
-        exclude_patterns=exclude_patterns,
-        recursive=recursive,
-        max_workers=max_workers,
-        file_type_map=file_type_map,
-        preprocessor_config=preprocessor_config,
-        metadata_extraction=metadata_extraction,
-        entity_extraction=entity_extraction,
-        chunking_preparation=chunking_preparation,
-        options=options,
-    )
+    result = {
+        'version': user_config.get('version', DEFAULTS['version']),
+        'recursive': recursive,
+        'max_workers': max_workers,
+        'exclude_patterns': exclude_patterns,
+        'file_type_map': file_type_map,
+        'content_categories': content_categories,
+        'preprocessor_config': preprocessor_config,
+        'metadata_extraction': metadata_extraction,
+        'entity_extraction': entity_extraction,
+        'chunking_preparation': chunking_preparation,
+        'options': options,
+    }
     
     return result
