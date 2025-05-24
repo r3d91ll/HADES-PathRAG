@@ -34,6 +34,20 @@ from src.docproc.utils.format_detector import (
     detect_format_from_path,
     get_content_category
 )
+from src.alerts import AlertManager, AlertLevel
+from src.validation.embedding_validator import (
+    validate_embeddings_before_isne,
+    validate_embeddings_after_isne,
+    create_validation_summary,
+    attach_validation_summary
+)
+from src.alerts import AlertManager, AlertLevel
+from src.validation.embedding_validator import (
+    validate_embeddings_before_isne,
+    validate_embeddings_after_isne,
+    create_validation_summary,
+    attach_validation_summary
+)
 
 # Custom timing formatter
 class TimingFormatter(logging.Formatter):
@@ -574,7 +588,8 @@ class PipelineMultiprocessTester:
         output_dir: str,
         num_files: int = 50,
         max_workers: int = 4,
-        batch_size: int = 12
+        batch_size: int = 12,
+        alert_threshold: str = "MEDIUM"
     ):
         """Initialize the multiprocessing pipeline tester."""
         self.test_data_dir = Path(test_data_dir)
@@ -585,6 +600,18 @@ class PipelineMultiprocessTester:
         
         # Create output directory if it doesn't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup alert directory
+        self.alert_dir = self.output_dir / "alerts"
+        self.alert_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize alert manager
+        self.alert_threshold = getattr(AlertLevel, alert_threshold, AlertLevel.MEDIUM)
+        self.alert_manager = AlertManager(
+            alert_dir=str(self.alert_dir),
+            min_level=self.alert_threshold,
+            email_config=None  # No email alerts in test mode
+        )
         
         # Load configuration
         self.config = load_pipeline_config()
@@ -600,7 +627,12 @@ class PipelineMultiprocessTester:
                 "embedding": 0,
                 "total": 0
             },
-            "file_details": {}
+            "file_details": {},
+            "validation": {
+                "pre_validation": {},
+                "post_validation": {},
+                "alerts": []
+            }
         }
     
     def find_supported_files(self) -> List[Path]:
@@ -683,580 +715,6 @@ class PipelineMultiprocessTester:
         supported_files = sorted(supported_files, key=lambda x: str(x))
         logger.info(f"Found {len(supported_files)} supported files in {self.test_data_dir}")
         
-        if len(supported_files) > self.num_files:
-            # Select a representative subset
-            return supported_files[:self.num_files]
-        return supported_files
-    
-    def run_test(self, run_isne_training=False) -> Dict[str, Any]:
-        """
-        Run the pipeline multiprocessing test.
-        
-        Args:
-            run_isne_training: If True, will run ISNE training directly with in-memory data after pipeline processing
-            
-        Returns:
-            Dictionary with test statistics and results
-        """
-        logger.info("=== Starting Multiprocessing Pipeline Test ===")
-        logger.info(f"Max Workers: {self.max_workers}, Batch Size: {self.batch_size}, Files to Process: {self.num_files}")
-        
-        # Overall timing
-        test_start_time = time.time()
-        
-        # Find files to process
-        file_discovery_start = time.time()
-        files = self.find_supported_files()
-        file_discovery_time = time.time() - file_discovery_start
-        
-        logger.info(f"Found {len(files)} supported files in {file_discovery_time:.2f}s")
-        logger.info(f"Starting parallel processing of {len(files)} files...")
-        
-        # Prepare worker arguments
-        worker_args = [(file, self.config, i % self.max_workers) for i, file in enumerate(files)]
-        
-        # Start the worker pool with the specified number of workers
-        parallel_start = time.time()
-        with Pool(processes=self.max_workers) as pool:
-            results = pool.map(process_document, worker_args)
-        parallel_time = time.time() - parallel_start
-        
-        # Update statistics
-        stats_start = time.time()
-        for result in results:
-            if "file_id" not in result:
-                continue
-            
-            self.stats["total_files"] += 1
-            self.stats["total_chunks"] += len(result.get("chunks", []))
-            self.stats["total_embeddings"] += len(result.get("embeddings", []))
-            
-            # Update processing times
-            for timing_key in ["document_processing", "chunking", "embedding", "total"]:
-                self.stats["processing_time"][timing_key] += result["timing"].get(timing_key, 0)
-            
-            # Store file details
-            self.stats["file_details"][result["file_id"]] = {
-                "file_name": result["file_name"],
-                "file_size": result["file_size"],
-                "chunks": len(result.get("chunks", [])),
-                "embeddings": len(result.get("embeddings", [])),
-                "processing_time": result["timing"]
-            }
-        stats_time = time.time() - stats_start
-        
-        # Save the results
-        # Save statistics to output file
-        output_file = self.output_dir / "pipeline_stats.json"
-        save_start = time.time()
-        with open(output_file, "w") as f:
-            json.dump(self.stats, f, indent=2)
-        
-        # Save all processed documents for inspection
-        sample_output = self.output_dir / "isne_input_sample.json"
-        with open(sample_output, "w") as f:
-            # Save a sample of the processed documents (first 5 or fewer)
-            sample_docs = results[:min(5, len(results))]
-            json.dump(sample_docs, f, indent=2)
-        
-        logger.info(f"Saved statistics to {output_file}")
-        logger.info(f"Saved sample ISNE input to {sample_output}")
-        save_time = time.time() - save_start
-        
-        # Store processing time data for report later
-        self.processing_stats = {
-            "file_discovery_time": file_discovery_time,
-            "parallel_time": parallel_time,
-            "stats_time": stats_time,
-            "save_time": save_time,
-            "test_start_time": test_start_time,
-            "results": results,
-            "total_runtime": time.time() - test_start_time
-        }
-        
-        # Log brief processing completion
-        logger.info("Pipeline document processing completed successfully")
-        logger.info(f"Processed {self.stats['total_files']} files with {self.stats['total_chunks']} chunks")
-        if "total_embeddings" in self.stats:
-            logger.info(f"Generated {self.stats['total_embeddings']} embeddings")
-            
-        # Optional: Run ISNE training directly with in-memory data if requested
-        isne_results = None
-        if run_isne_training:
-            logger.info("\n=== Starting In-Memory ISNE Training ===")
-            isne_results = self.direct_train_isne(results)
-            
-        # Now generate the complete performance report after all processing is done
-        self._generate_performance_report(run_isne_training)
-        
-        return isne_results
-        
-    def _generate_performance_report(self, run_isne_training):
-        # Calculate average processing times
-        if self.stats["total_files"] > 0:
-            avg_doc_time = self.stats["processing_time"]["document_processing"] / self.stats["total_files"]
-            avg_chunk_time = self.stats["processing_time"]["chunking"] / self.stats["total_files"]
-            avg_embed_time = self.stats["processing_time"]["embedding"] / self.stats["total_files"]
-        else:
-            avg_doc_time = avg_chunk_time = avg_embed_time = 0
-        
-        # Calculate throughput
-        total_runtime = time.time() - self.processing_stats["test_start_time"]
-        files_per_second = self.stats["total_files"] / total_runtime if total_runtime > 0 else 0
-        chunks_per_second = self.stats["total_chunks"] / total_runtime if total_runtime > 0 else 0
-        
-        # Calculate parallelization efficiency
-        theoretical_speedup = self.max_workers
-        sequential_runtime = sum(r["timing"].get("total", 0) for r in self.processing_stats["results"] if "timing" in r)
-        actual_speedup = sequential_runtime / self.processing_stats["parallel_time"] if self.processing_stats["parallel_time"] > 0 else 0
-        efficiency = actual_speedup / theoretical_speedup if theoretical_speedup > 0 else 0
-        
-        # Performance report
-        logger.info("\n=== Performance Report ===")
-        logger.info("\nTiming Breakdown:")
-        logger.info(f"  Setup:                0.00s")
-        logger.info(f"  File Discovery:       {self.processing_stats['file_discovery_time']:.2f}s")
-        logger.info(f"  Parallel Processing:  {self.processing_stats['parallel_time']:.2f}s")
-        logger.info(f"  Statistics Update:    {self.processing_stats['stats_time']:.2f}s")
-        logger.info(f"  Results Saving:       {self.processing_stats['save_time']:.2f}s")
-        
-        # Add ISNE training time if run
-        isne_time = 0.0
-        if run_isne_training and hasattr(self, 'isne_training_time'):
-            isne_time = self.isne_training_time
-            logger.info(f"  ISNE Training:        {isne_time:.2f}s")
-            
-        logger.info(f"  Total Runtime:        {total_runtime + isne_time:.2f}s")
-        
-        logger.info("\nAverage Processing Times:")
-        logger.info(f"  Document Processing:  {avg_doc_time:.2f}s per file")
-        logger.info(f"  Chunking:             {avg_chunk_time:.2f}s per file")
-        logger.info(f"  Embedding:            {avg_embed_time:.2f}s per file")
-        
-        logger.info("\nThroughput:")
-        logger.info(f"  Files per second:     {files_per_second:.2f}")
-        logger.info(f"  Chunks per second:    {chunks_per_second:.2f}")
-        
-        logger.info("\nParallelization Efficiency:")
-        logger.info(f"  Theoretical Speedup:  {theoretical_speedup:.2f}x")
-        logger.info(f"  Actual Speedup:       {actual_speedup:.2f}x")
-        logger.info(f"  Efficiency:           {efficiency:.2f} ({efficiency*100:.1f}%)")
-        
-        logger.info("\nPipeline Test Completed Successfully!")
-        logger.info(f"  - Processed {self.stats['total_files']} files with {self.stats['total_chunks']} chunks")
-        if "total_embeddings" in self.stats:
-            logger.info(f"  - Generated {self.stats['total_embeddings']} embeddings with dimension unknown")
-        logger.info(f"  - Saved results to {self.output_dir}")
-        
-        # Add ISNE training details if run
-        if run_isne_training and hasattr(self, 'isne_training_time'):
-            # Get training results if available
-            isne_results = getattr(self, 'isne_results', None)
-            if isne_results and 'training_metrics' in isne_results:
-                metrics = isne_results['training_metrics']
-                logger.info("\nISNE Training Results:")
-                logger.info(f"  - Graph size: {metrics.get('graph_nodes', 0)} nodes, {metrics.get('graph_edges', 0)} edges")
-                logger.info(f"  - Training time: {self.isne_training_time:.2f}s")
-                logger.info(f"  - Epochs completed: {metrics.get('epochs', 0)}")
-                logger.info(f"  - Final loss: {metrics.get('final_loss', 0):.4f}")
-                logger.info(f"  - Device used: {metrics.get('device', 'unknown')}")
-                if 'embedding_dim' in metrics and 'output_dim' in metrics:
-                    logger.info(f"  - Dimensions: {metrics.get('embedding_dim', 0)} → {metrics.get('output_dim', 0)}")
-            else:
-                logger.info("\nISNE Training Completed")
-                logger.info(f"  - Training time: {self.isne_training_time:.2f}s")
-        
-        # Write full performance report to file for later analysis
-        report_file = self.output_dir / "performance_report.txt"
-        # TODO: Write detailed performance metrics to file
-        
-        return self.stats
-    
-    def prepare_documents_for_isne(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare documents for ISNE training by ensuring proper structure.
-        
-        Args:
-            documents: List of document dictionaries with embeddings
-            
-        Returns:
-            List of properly structured documents for ISNE training
-        """
-        logger.info(f"Preparing {len(documents)} documents for ISNE training")
-        
-        # Create a deep copy to avoid modifying originals
-        import copy
-        prepped_docs = copy.deepcopy(documents)
-        
-        # Simplify the document structure for ISNE training - keep only docs with chunks
-        valid_docs = []
-        all_chunks = []
-        
-        # Step 1: Collect all valid chunks with embeddings
-        for doc in prepped_docs:
-            if "chunks" not in doc or not doc["chunks"]:
-                continue
-                
-            chunks = []
-            for i, chunk in enumerate(doc["chunks"]):
-                if "embedding" in chunk and chunk["embedding"]:
-                    # Create a clean chunk with only necessary fields
-                    clean_chunk = {
-                        "id": f"{doc['file_id']}_chunk_{i}",
-                        "content": chunk.get("content", ""),
-                        "embedding": chunk["embedding"],
-                        "doc_id": doc["file_id"],
-                        # Preserve embedding model metadata for ISNE awareness
-                        "embedding_model": chunk.get("embedding_model", "unknown"),
-                        "embedding_type": chunk.get("embedding_type", "unknown"),
-                        "overlap_context": {
-                            "position": i,
-                            "total": len(doc["chunks"]),
-                            "pre": "",
-                            "post": ""
-                        }
-                    }
-                    chunks.append(clean_chunk)
-                    all_chunks.append(clean_chunk)  # Keep a flat list of all chunks
-            
-            if chunks:  # Only keep document if it has valid chunks
-                clean_doc = {
-                    "file_id": doc["file_id"],
-                    "file_name": doc.get("file_name", ""),
-                    "chunks": chunks
-                }
-                valid_docs.append(clean_doc)
-        
-        # Step 2: Ensure every document has proper relationships between chunks
-        for doc in valid_docs:
-            chunks = doc.get("chunks", [])
-            if len(chunks) < 2:  # No relationships possible if only one chunk
-                continue
-                
-            # Explicitly add relationships field to each chunk
-            for i, chunk in enumerate(chunks):
-                if "relationships" not in chunk:
-                    chunk["relationships"] = []
-                
-                # Connect this chunk to all other chunks with decreasing weight by distance
-                for j, other_chunk in enumerate(chunks):
-                    if i != j:  # Skip self-relationships
-                        # Calculate a weight based on proximity (higher for closer chunks)
-                        proximity_weight = 1.0 - (abs(i-j) / len(chunks))
-                        relationship = {
-                            "source": chunk["id"],
-                            "target": other_chunk["id"],
-                            "type": "SEQUENTIAL",
-                            "weight": proximity_weight
-                        }
-                        chunk["relationships"].append(relationship)
-        
-        # Step 3: Create a single artificial document with all chunks if we don't have enough docs
-        if len(valid_docs) < 2 and all_chunks:
-            # Force create a single document with all chunks to ensure we have enough for ISNE
-            logger.info(f"Creating a single document with all {len(all_chunks)} chunks for ISNE training")
-            
-            # Ensure all chunks in this combined document are properly connected
-            for i, chunk in enumerate(all_chunks):
-                if "relationships" not in chunk:
-                    chunk["relationships"] = []
-                
-                # Connect to at least 2 other chunks (or all if fewer than 3 total)
-                for j, other_chunk in enumerate(all_chunks):
-                    if i != j:  # Skip self-relationships
-                        proximity_weight = 1.0 - (abs(i-j) / max(1, len(all_chunks)-1))
-                        relationship = {
-                            "source": chunk["id"],
-                            "target": other_chunk["id"],
-                            "type": "ARTIFICIAL",
-                            "weight": proximity_weight
-                        }
-                        chunk["relationships"].append(relationship)
-            
-            return [{
-                "file_id": "combined_document",
-                "file_name": "Combined Document",
-                "chunks": all_chunks
-            }]
-        
-        # Count total chunks for verification
-        total_chunks = sum(len(doc.get("chunks", [])) for doc in valid_docs)
-        logger.info(f"Prepared {len(valid_docs)} documents with {total_chunks} total chunks for ISNE training")
-        
-        return valid_docs
-    
-    def simplified_isne_training(self, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """A simplified ISNE training function that doesn't rely on the complex orchestrator.
-        
-        This function implements a minimal ISNE training approach that skips the complex
-        graph construction and directly uses a simple dense graph for training.
-        
-        Args:
-            documents: List of document dictionaries with embeddings
-            
-        Returns:
-            Dictionary with training results
-        """
-        import torch
-        import numpy as np
-        from pathlib import Path
-        import time
-        
-        logger.info("=== Starting Simplified ISNE Training ===")
-        
-        # Create output directories
-        output_dir = self.output_dir / "isne-training-simplified"
-        output_dir.mkdir(exist_ok=True, parents=True)
-        model_output_dir = Path("./models/isne")
-        model_output_dir.mkdir(exist_ok=True, parents=True)
-        
-        # Step 1: Extract embeddings from documents
-        all_embeddings = []
-        all_chunk_ids = []
-        
-        for doc in documents:
-            for chunk in doc.get("chunks", []):
-                if chunk.get("embedding"):
-                    all_embeddings.append(chunk["embedding"])
-                    all_chunk_ids.append(chunk["id"])
-        
-        if not all_embeddings:
-            logger.error("No embeddings found in documents")
-            return {"success": False, "error": "No embeddings found"}
-        
-        logger.info(f"Extracted {len(all_embeddings)} embeddings from documents")
-        
-        # Step 2: Convert embeddings to tensor
-        embeddings_tensor = torch.tensor(all_embeddings, dtype=torch.float)
-        
-        # Step 3: Determine device for training
-        device = "cpu"  # Default fallback
-        if self.config.get("gpu_execution", {}).get("enabled", False):
-            device = self.config["gpu_execution"]["isne"]["device"]
-            logger.info(f"Using GPU for ISNE training: {device}")
-        elif self.config.get("cpu_execution", {}).get("enabled", False):
-            device = "cpu"
-            logger.info(f"Using CPU for ISNE training")
-        
-        embeddings_tensor = embeddings_tensor.to(device)
-        
-        # Step 4: Create a simplified model
-        class SimplifiedISNE(torch.nn.Module):
-            def __init__(self, input_dim, output_dim):
-                super().__init__()
-                self.linear = torch.nn.Linear(input_dim, output_dim)
-                
-            def forward(self, x):
-                return self.linear(x)
-        
-        # Step 5: Define training parameters
-        input_dim = embeddings_tensor.shape[1]
-        output_dim = 64  # Same as standard ISNE
-        learning_rate = 0.01
-        num_epochs = 20
-        
-        logger.info(f"Creating simplified ISNE model with input dim {input_dim} and output dim {output_dim}")
-        
-        # Step 6: Create and train the model
-        model = SimplifiedISNE(input_dim, output_dim).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        
-        # Step 7: Train the model
-        logger.info("Starting simplified ISNE training...")
-        start_time = time.time()
-        
-        losses = []
-        for epoch in range(num_epochs):
-            model.train()
-            optimizer.zero_grad()
-            
-            # Forward pass
-            isne_embeddings = model(embeddings_tensor)
-            
-            # Compute a simplified loss - cosine similarity preservation
-            # Original cosine similarity
-            orig_norm = torch.nn.functional.normalize(embeddings_tensor, p=2, dim=1)
-            orig_sim = torch.mm(orig_norm, orig_norm.t())
-            
-            # ISNE cosine similarity
-            isne_norm = torch.nn.functional.normalize(isne_embeddings, p=2, dim=1)
-            isne_sim = torch.mm(isne_norm, isne_norm.t())
-            
-            # Loss is MSE between the two similarity matrices
-            loss = torch.nn.functional.mse_loss(isne_sim, orig_sim)
-            
-            # Backward pass and optimize
-            loss.backward()
-            optimizer.step()
-            
-            losses.append(loss.item())
-            
-            if (epoch + 1) % 5 == 0 or epoch == 0:
-                logger.info(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.6f}")
-        
-        training_time = time.time() - start_time
-        logger.info(f"Training completed in {training_time:.2f} seconds")
-        
-        # Step 8: Generate final embeddings
-        model.eval()
-        with torch.no_grad():
-            final_embeddings = model(embeddings_tensor).cpu().numpy()
-        
-        # Step 9: Save the model and embeddings
-        torch.save(model.state_dict(), model_output_dir / "simplified_isne_model.pt")
-        np.save(output_dir / "isne_embeddings.npy", final_embeddings)
-        
-        # Step 10: Create a mapping from chunk IDs to embeddings
-        chunk_embeddings = {}
-        for i, chunk_id in enumerate(all_chunk_ids):
-            chunk_embeddings[chunk_id] = final_embeddings[i].tolist()
-        
-        # Step 11: Save the mapping to a file
-        import json
-        with open(output_dir / "chunk_isne_embeddings.json", "w") as f:
-            json.dump(chunk_embeddings, f)
-        
-        logger.info(f"Saved ISNE embeddings for {len(chunk_embeddings)} chunks")
-        
-        # Return the results
-        return {
-            "success": True,
-            "num_embeddings": len(chunk_embeddings),
-            "training_time": training_time,
-            "epochs": num_epochs,
-            "final_loss": losses[-1] if losses else None,
-            "embedding_dim": output_dim
-        }
-    
-    def direct_train_isne(self, documents: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Directly train ISNE embeddings using a simplified approach.
-        
-        Instead of using the complex ISNE orchestrator with graph construction,
-        this uses a simplified linear projection approach that preserves cosine similarities.
-        
-        Args:
-            documents: List of document dictionaries with embeddings
-            
-        Returns:
-            Dictionary with training results
-        """
-        logger.info("=== Starting In-Memory ISNE Training ===")
-        logger.info("Using simplified ISNE training approach to avoid graph construction issues")
-        
-        # Convert results to document format
-        doc_list = []
-        for result in documents:
-            if "file_id" in result:
-                # Use the complete document with embeddings
-                doc_list.append(result)
-                
-        # Prepare documents for ISNE training by ensuring proper structure
-        doc_list = self.prepare_documents_for_isne(doc_list)
-        
-        # Write the prepared documents to disk for debugging
-        debug_output_path = self.output_dir / "isne_input_sample.json"
-        import json
-        with open(debug_output_path, "w") as f:
-            json.dump(doc_list, f, indent=2)
-        logger.info(f"Saved prepared ISNE input sample to {debug_output_path}")
-        
-        # Log document and chunk counts
-        chunk_count = sum(len(doc.get("chunks", [])) for doc in doc_list)
-        logger.info(f"Prepared {len(doc_list)} documents with {chunk_count} total chunks for ISNE training")
-        
-        # Count chunks with embeddings
-        chunks_with_embeddings = sum(
-            1 for doc in doc_list 
-            for chunk in doc.get("chunks", []) 
-            if chunk.get("embedding")
-        )
-        logger.info(f"Found {chunks_with_embeddings} chunks with embeddings")
-        
-        # Use the simplified ISNE training function
-        return self.simplified_isne_training(doc_list)
-    
-    def run_ingestion(self, output_dir=None, model_path="./models/isne/isne_model_latest.pt", save_enhanced=True) -> Dict[str, Any]:
-        """
-        Run the ingestion pipeline with ISNE model enhancement and save to JSON.
-        
-        This method demonstrates how to use a trained ISNE model to enhance document embeddings
-        during ingestion and save the enhanced documents as JSON for later reference.
-        
-        Args:
-            model_path: Path to the trained ISNE model
-            output_file: Optional custom output file path for enhanced documents
-            
-        Returns:
-            Dictionary with ingestion statistics and results
-        """
-        logger.info("=== Starting Ingestion Pipeline with ISNE Enhancement ===")
-        
-        # First, run the standard document processing pipeline to get documents with embeddings
-        logger.info("Step 1: Processing documents through standard pipeline...")
-        results = self.run_test(run_isne_training=False)
-        
-        # Get the processed documents
-        documents = self.processing_stats["results"]
-        logger.info(f"Processed {len(documents)} documents with base embeddings")
-        
-        # Now apply the ISNE model to enhance the embeddings
-        logger.info("\nStep 2: Applying ISNE model to enhance embeddings...")
-        isne_start_time = time.time()
-        enhanced_documents = self.apply_isne_model(documents, model_path)
-        isne_end_time = time.time()
-        isne_processing_time = isne_end_time - isne_start_time
-        logger.info(f"ISNE enhancement completed in {isne_processing_time:.2f} seconds")
-        
-        # Save the enhanced documents to a JSON file
-        logger.info("\nStep 3: Saving enhanced documents to JSON file...")
-        save_start_time = time.time()
-        
-        # Determine output path
-        if output_dir:
-            json_output_path = Path(output_dir) / "isne_enhanced_documents.json"
-        else:
-            json_output_path = self.output_dir / "isne_enhanced_documents.json"
-            
-        # Save full documents and a sample version
-        try:
-            # Create a sample with limited documents for easier viewing
-            sample_size = min(2, len(enhanced_documents))
-            sample_docs = enhanced_documents[:sample_size]
-            
-            # Save sample to a separate file
-            sample_path = self.output_dir / "isne_enhanced_sample.json"
-            with open(sample_path, "w") as f:
-                json.dump(sample_docs, f, indent=2)
-            
-            # Save all documents
-            with open(json_output_path, "w") as f:
-                json.dump(enhanced_documents, f, indent=2)
-                
-            logger.info(f"Saved all enhanced documents to {json_output_path}")
-            logger.info(f"Saved sample of {sample_size} documents to {sample_path}")
-        except Exception as e:
-            logger.error(f"Error saving enhanced documents: {e}")
-            
-        save_end_time = time.time()
-        save_time = save_end_time - save_start_time
-        logger.info(f"Document saving completed in {save_time:.2f} seconds")
-        
-        # Compile and return statistics
-        ingestion_stats = {
-            "total_documents": len(enhanced_documents),
-            "processing_time": self.processing_stats["parallel_time"],
-            "isne_enhancement_time": isne_processing_time,
-            "json_save_time": save_time,
-            "total_ingestion_time": time.time() - self.processing_stats["test_start_time"],
-            "output_path": str(json_output_path),
-            "sample_path": str(sample_path)
-        }
-        
-        # Generate comprehensive report
-        self._generate_ingestion_report(ingestion_stats)
-        
-        return ingestion_stats
-    
-    def apply_isne_model(self, documents: List[Dict[str, Any]], model_path: str) -> List[Dict[str, Any]]:
         """
         Apply trained ISNE model to enhance document embeddings.
         
@@ -1267,235 +725,189 @@ class PipelineMultiprocessTester:
         Returns:
             List of documents with enhanced embeddings
         """
+        import os
         from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
+        # Check for any existing ISNE embeddings (shouldn't be any at this stage)
+        existing_isne = sum(1 for doc in docs for chunk in doc.get("chunks", []) 
+                          if "isne_embedding" in chunk)
+            
+        # Count chunks with base embeddings
+        chunks_with_base_embeddings = sum(1 for doc in docs for chunk in doc.get("chunks", []) 
+                                       if "embedding" in chunk and chunk["embedding"])
+            
+        logger.info(f"Pre-ISNE Validation: {total_docs} documents, {docs_with_chunks} with chunks, {total_chunks} total chunks")
+        logger.info(f"Found {chunks_with_base_embeddings}/{total_chunks} chunks with base embeddings")
+            
+        if existing_isne > 0:
+            logger.warning(f"Found {existing_isne} chunks with existing ISNE embeddings before application!")
+                
+        if chunks_with_base_embeddings < total_chunks:
+            logger.warning(f"Missing base embeddings in {total_chunks - chunks_with_base_embeddings} chunks")
+            
+        return {
+            "total_docs": total_docs,
+            "docs_with_chunks": docs_with_chunks,
+            "total_chunks": total_chunks,
+            "chunks_with_base_embeddings": chunks_with_base_embeddings,
+            "existing_isne": existing_isne
+        }
+        
+        # Sort files to ensure consistent order
+        supported_files = sorted(supported_files, key=lambda x: str(x))
+        logger.info(f"Found {len(supported_files)} supported files in {self.test_data_dir}")
+        
+        return supported_files
+        
+    def enhance_with_isne(self, docs, model_path):
+        """
+        Apply trained ISNE model to enhance document embeddings.
+        
+        Args:
+            docs: List of documents with chunks and base embeddings
+            model_path: Path to the trained ISNE model
+            
+        Returns:
+            Enhanced documents with ISNE embeddings
+        """
         import torch
+        from torch_geometric.data import Data
+        from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
         
-        logger.info(f"Loading ISNE model from {model_path}")
+        logger.info(f"Enhancing documents with ISNE model from {model_path}")
+        enhanced_documents = docs.copy()
         
-        # Determine device
-        device = "cpu"  # Default fallback
-        if self.config.get("gpu_execution", {}).get("enabled", False):
-            device = self.config["gpu_execution"]["isne"]["device"]
-            logger.info(f"Using GPU for ISNE inference: {device}")
-        elif self.config.get("cpu_execution", {}).get("enabled", False):
-            device = "cpu"
-            logger.info(f"Using CPU for ISNE inference")
+        # Extract embeddings and metadata
+        node_embeddings = []
+        node_metadata = []
+        node_model_types = []  # Track embedding model types
+        edge_index_src = []
+        edge_index_dst = []
+        edge_attr = []
         
-        # Check if model file exists
-        model_file = Path(model_path)
-        if not model_file.exists():
-            logger.error(f"Model file not found: {model_path}")
-            raise FileNotFoundError(f"ISNE model file not found: {model_path}")
+        # Node index mapping
+        node_idx_map = {}
+        current_idx = 0
         
-        # Load model
-        try:
-            model_data = torch.load(model_path, map_location=device)
-            logger.info(f"Successfully loaded model with keys: {list(model_data.keys())}")
-            
-            # Load model settings
-            model_config = model_data.get("config", {})
-            if not model_config:
-                logger.warning("Model config not found in saved model, using defaults")
-                
-            # Extract model parameters
-            embedding_dim = model_config.get("embedding_dim", 768)  # Default ModernBERT dimension
-            hidden_dim = model_config.get("hidden_dim", 256)
-            output_dim = model_config.get("output_dim", 768)
-            
-            logger.info(f"Model dimensions: {embedding_dim} → {hidden_dim} → {output_dim}")
-            
-            # Recreate the model architecture
-            from src.isne.models.isne_model import ISNEModel
-            model = ISNEModel(
-                in_features=embedding_dim,
-                hidden_features=hidden_dim,
-                out_features=output_dim,
-                num_layers=model_config.get("num_layers", 2)
-            )
-            
-            # Load the model weights
-            model.load_state_dict(model_data["model_state_dict"])
-            model.to(device)
-            model.eval()  # Set to evaluation mode
-            
-            logger.info("ISNE model loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Error loading ISNE model: {e}")
-            raise
-        
-        # Prepare documents for ISNE inference
-        logger.info("Preparing document graph for ISNE inference...")
-        
-        # Create a simplified graph building function similar to what the trainer uses
-        def build_graph_from_documents(docs):
-            import torch
-            from torch_geometric.data import Data
-            
-            # Extract embeddings and metadata
-            node_embeddings = []
-            node_metadata = []
-            node_model_types = []  # Track embedding model types
-            edge_index_src = []
-            edge_index_dst = []
-            edge_attr = []
-            
-            # Node index mapping
-            node_idx_map = {}
-            current_idx = 0
-            
-            # First pass: collect all nodes
-            for doc in docs:
-                if "chunks" not in doc or not doc["chunks"]:
-                    continue
-                    
-                for chunk_idx, chunk in enumerate(doc["chunks"]):
-                    # Skip chunks without embeddings
-                    if "embedding" not in chunk or chunk["embedding"] is None:
-                        continue
-                        
-                    # Create a unique ID for this chunk
-                    chunk_id = f"{doc['file_id']}_{chunk_idx}"
-                    
-                    # Store the node index mapping
-                    node_idx_map[chunk_id] = current_idx
-                    current_idx += 1
-                    
-                    # Add the embedding and metadata
-                    node_embeddings.append(chunk["embedding"])
-                    
-                    # Store embedding model information for ISNE awareness
-                    embedding_model = chunk.get("embedding_model", "unknown")
-                    embedding_type = chunk.get("embedding_type", "unknown")
-                    
-                    node_model_types.append(embedding_type)
-                    
-                    node_metadata.append({
-                        "file_id": doc["file_id"],
-                        "chunk_id": chunk_id,
-                        "text": chunk.get("text", ""),
-                        "embedding_model": embedding_model,
-                        "embedding_type": embedding_type,
-                        "metadata": chunk.get("metadata", {})
-                    })
-            
-            # Second pass: create edges
-            for doc in docs:
-                if "chunks" not in doc or len(doc["chunks"]) < 2:
-                    continue
-                    
-                # Create sequential edges between chunks in the same document
-                for i in range(len(doc["chunks"]) - 1):
-                    src_id = f"{doc['file_id']}_{i}"
-                    dst_id = f"{doc['file_id']}_{i+1}"
-                    
-                    if src_id in node_idx_map and dst_id in node_idx_map:
-                        src_idx = node_idx_map[src_id]
-                        dst_idx = node_idx_map[dst_id]
-                        
-                        # Check if embeddings are from the same model type
-                        src_type = node_model_types[src_idx] if src_idx < len(node_model_types) else "unknown"
-                        dst_type = node_model_types[dst_idx] if dst_idx < len(node_model_types) else "unknown"
-                        
-                        # Adjust edge weight based on embedding model compatibility
-                        # Same model type gets full weight, different types get reduced weight
-                        edge_weight = 1.0 if src_type == dst_type else 0.7
-                        
-                        # Add sequential edge
-                        edge_index_src.append(src_idx)
-                        edge_index_dst.append(dst_idx)
-                        edge_attr.append([edge_weight])  # Sequential relationship with model-aware weight
-                        
-                        # Add reverse edge for undirected graph
-                        edge_index_src.append(dst_idx)
-                        edge_index_dst.append(src_idx)
-                        edge_attr.append([edge_weight])
-            
-            # Create the PyTorch Geometric data object
-            if not node_embeddings:
-                logger.warning("No valid embeddings found in documents")
-                return None, []
-                
-            node_embeddings_tensor = torch.tensor(node_embeddings, dtype=torch.float)
-            edge_index = torch.tensor([edge_index_src, edge_index_dst], dtype=torch.long)
-            edge_attr_tensor = torch.tensor(edge_attr, dtype=torch.float)
-            
-            graph = Data(
-                x=node_embeddings_tensor,
-                edge_index=edge_index,
-                edge_attr=edge_attr_tensor
-            )
-            
-            logger.info(f"Created graph with {graph.num_nodes} nodes and {graph.num_edges} edges")
-            
-            return graph, node_metadata, node_idx_map
-        
-        # Build the graph from documents
-        graph, node_metadata, node_idx_map = build_graph_from_documents(documents)
-        
-        if graph is None or graph.num_nodes == 0:
-            logger.error("Failed to build valid graph from documents")
-            return documents
-        
-        # Apply the ISNE model to enhance embeddings
-        logger.info(f"Applying ISNE model to enhance {graph.num_nodes} embeddings...")
-        try:
-            with torch.no_grad():
-                # Move graph to appropriate device
-                graph = graph.to(device)
-                
-                # Make sure all tensors are properly shaped and on the correct device
-                x = graph.x.to(device)
-                edge_index = graph.edge_index.to(device)
-                
-                # Handle edge attributes with careful type checking
-                edge_attr = None
-                if hasattr(graph, 'edge_attr') and graph.edge_attr is not None:
-                    edge_attr = graph.edge_attr
-                    # Convert to float tensor if needed
-                    if not isinstance(edge_attr, torch.FloatTensor) and not isinstance(edge_attr, torch.cuda.FloatTensor):
-                        edge_attr = edge_attr.float()
-                    
-                    # Reshape if needed
-                    if edge_attr.dim() == 2 and edge_attr.size(1) == 1:
-                        edge_attr = edge_attr.squeeze(1)
-                    
-                    edge_attr = edge_attr.to(device)
-                
-                # The ISNEModel forward method doesn't use edge_attr
-                # It only takes x, edge_index, and an optional return_attention flag
-                enhanced_embeddings = model(x, edge_index)
-                
-                # Move back to CPU for further processing
-                enhanced_embeddings = enhanced_embeddings.cpu().numpy()
-                
-                logger.info(f"Successfully generated {len(enhanced_embeddings)} enhanced embeddings")
-                
-        except Exception as e:
-            logger.error(f"Error during ISNE inference: {e}")
-            return documents
-        
-        # Update documents with enhanced embeddings
-        logger.info("Updating documents with enhanced embeddings...")
-        
-        # Create deep copy of documents to avoid modifying the originals
-        import copy
-        enhanced_documents = copy.deepcopy(documents)
-        
-        # Update embeddings in the document structure
-        for doc_idx, doc in enumerate(enhanced_documents):
+        # First pass: collect all nodes
+        logger.info("Building document graph for ISNE inference")
+        for doc in enhanced_documents:
             if "chunks" not in doc or not doc["chunks"]:
                 continue
-                
+            
             for chunk_idx, chunk in enumerate(doc["chunks"]):
-                chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                if "embedding" not in chunk or not chunk["embedding"]:
+                    continue
                 
-                if chunk_id in node_idx_map:
-                    node_idx = node_idx_map[chunk_id]
-                    # Add the enhanced embedding to the chunk
-                    chunk["isne_embedding"] = enhanced_embeddings[node_idx].tolist()
+                chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                node_idx_map[chunk_id] = current_idx
+                
+                # Add the base embedding
+                node_embeddings.append(chunk["embedding"])
+                
+                # Add metadata
+                metadata = {
+                    "doc_id": doc["file_id"],
+                    "chunk_idx": chunk_idx,
+                    "text": chunk.get("text", "")[:100]  # Truncate for metadata
+                }
+                node_metadata.append(metadata)
+                
+                # Track embedding model type
+                model_type = chunk.get("metadata", {}).get("embedding_model", "default")
+                node_model_types.append(model_type)
+                
+                current_idx += 1
         
-        logger.info("Document enhancement with ISNE embeddings completed")
+        # Second pass: build edges
+        for doc in enhanced_documents:
+            if "chunks" not in doc or not doc["chunks"]:
+                continue
+            
+            # Create sequential edges between chunks in the same document
+            for i in range(len(doc["chunks"]) - 1):
+                source_id = f"{doc['file_id']}_{i}"
+                target_id = f"{doc['file_id']}_{i+1}"
+                
+                if source_id in node_idx_map and target_id in node_idx_map:
+                    edge_index_src.append(node_idx_map[source_id])
+                    edge_index_dst.append(node_idx_map[target_id])
+                    edge_attr.append([1.0])  # Sequential relationship weight
+            
+            # Add code-specific relationships from chunk metadata
+            for chunk_idx, chunk in enumerate(doc["chunks"]):
+                if "metadata" not in chunk or "references" not in chunk["metadata"]:
+                    continue
+                
+                source_id = f"{doc['file_id']}_{chunk_idx}"
+                if source_id not in node_idx_map:
+                    continue
+                
+                # Process each reference (relationship)
+                for reference in chunk["metadata"]["references"]:
+                    target_id = reference.get("target")
+                    if not target_id or target_id not in node_idx_map:
+                        continue
+                    
+                    relation_type = reference.get("type", "REFERENCES")
+                    weight = reference.get("weight", 0.8)
+                    
+                    # Add edge to the graph
+                    edge_index_src.append(node_idx_map[source_id])
+                    edge_index_dst.append(node_idx_map[target_id])
+                    edge_attr.append([weight])  # Use the relationship weight
+        
+        if not node_embeddings:
+            logger.warning("No valid nodes found for ISNE enhancement")
+            return enhanced_documents
+        
+        # Convert lists to tensors
+        try:
+            x = torch.tensor(node_embeddings, dtype=torch.float)
+            edge_index = torch.tensor([edge_index_src, edge_index_dst], dtype=torch.long)
+            edge_attr = torch.tensor(edge_attr, dtype=torch.float)
+            
+            # Create PyTorch Geometric Data object
+            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+            
+            logger.info(f"Built graph with {x.shape[0]} nodes and {edge_index.shape[1]} edges")
+            
+            # Load model
+            logger.info("Loading ISNE model")
+            model = ISNETrainingOrchestrator.load_model(model_path)
+            
+            # Apply ISNE model to get enhanced embeddings
+            logger.info("Applying ISNE model to enhance embeddings")
+            enhanced_embeddings = model(data.x, data.edge_index, data.edge_attr)
+            
+            # Add enhanced embeddings back to documents
+            logger.info("Adding enhanced embeddings to documents")
+            
+            # Add ISNE embeddings to chunks based on node mapping
+            for doc in enhanced_documents:
+                if "chunks" not in doc or not doc["chunks"]:
+                    continue
+                
+                for chunk_idx, chunk in enumerate(doc["chunks"]):
+                    if "embedding" not in chunk or not chunk["embedding"]:
+                        continue
+                    
+                    chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                    if chunk_id in node_idx_map:
+                        node_idx = node_idx_map[chunk_id]
+                        # Add the enhanced embedding to the chunk
+                        chunk["isne_embedding"] = enhanced_embeddings[node_idx].tolist()
+            
+            logger.info("Document enhancement with ISNE embeddings completed")
+            
+        except Exception as e:
+            error_msg = f"Error during ISNE enhancement: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            self.alert_manager.alert(
+                message=error_msg,
+                level="CRITICAL",
+                source="isne_pipeline",
+                context={"exception": str(e)}
+            )
         
         return enhanced_documents
     
@@ -1721,6 +1133,453 @@ class PipelineMultiprocessTester:
         
         return stats
     
+    def run_test(self, run_isne_training=False):
+        """Run the multiprocessing pipeline test.
+        
+        Args:
+            run_isne_training: Whether to run ISNE training after document processing
+        """
+        start_time = time.time()
+        logger.info(f"Starting pipeline multiprocessing test with {self.max_workers} workers")
+        
+        # Find all supported files in the test directory
+        supported_files = self.find_supported_files()
+        
+        # Limit the number of files if specified
+        if self.num_files > 0 and len(supported_files) > self.num_files:
+            logger.info(f"Limiting processing to {self.num_files} files (out of {len(supported_files)})")
+            supported_files = supported_files[:self.num_files]
+        
+        # Create the document processing output directory
+        doc_output_dir = self.output_dir / "documents"
+        doc_output_dir.mkdir(exist_ok=True)
+        
+        # Start the worker pool and process documents
+        with Pool(processes=self.max_workers) as pool:
+            # Create batches for processing
+            logger.info("Creating document processing batches...")
+            batches = []
+            for i in range(0, len(supported_files), self.batch_size):
+                batch = supported_files[i:i+self.batch_size]
+                batches.append(batch)
+            
+            logger.info(f"Created {len(batches)} batches of size {self.batch_size}")
+            
+            # Process each batch
+            all_processed_docs = []
+            batch_count = 0
+            
+            for batch in batches:
+                batch_count += 1
+                logger.info(f"Processing batch {batch_count}/{len(batches)} ({len(batch)} files)")
+                
+                # Create arguments for each file in the batch
+                process_args = []
+                for file_idx, file_path in enumerate(batch):
+                    # Assign a unique worker ID based on the batch and file index
+                    worker_id = ((batch_count - 1) % self.max_workers) * self.batch_size + file_idx % self.batch_size
+                    process_args.append((file_path, self.config, worker_id))
+                
+                # Process the batch in parallel
+                try:
+                    batch_results = pool.map(process_document, process_args)
+                    all_processed_docs.extend([r for r in batch_results if r is not None])
+                except Exception as e:
+                    logger.error(f"Error processing batch {batch_count}: {str(e)}", exc_info=True)
+            
+            # Collect statistics from all processed documents
+            self.stats["total_files"] = len(all_processed_docs)
+            total_chunks = sum(len(doc.get("chunks", [])) for doc in all_processed_docs)
+            self.stats["total_chunks"] = total_chunks
+            self.stats["total_embeddings"] = sum(len(doc.get("embeddings", [])) for doc in all_processed_docs)
+            
+            # Calculate total processing time by document type
+            for doc in all_processed_docs:
+                if "timing" in doc:
+                    for key, value in doc["timing"].items():
+                        if key in self.stats["processing_time"]:
+                            self.stats["processing_time"][key] += value
+                
+                # Store individual file details
+                self.stats["file_details"][doc["file_id"]] = {
+                    "file_name": doc["file_name"],
+                    "chunks": len(doc.get("chunks", [])),
+                    "embeddings": len(doc.get("embeddings", [])),
+                    "worker_id": doc["worker_id"],
+                    "completed_at": doc.get("completed_at", "")
+                }
+        
+        # Calculate total processing time
+        self.stats["processing_time"]["total"] = time.time() - start_time
+        
+        # Save processed documents to JSON file
+        docs_output_path = self.output_dir / "processed_documents.json"
+        with open(docs_output_path, "w") as f:
+            json.dump(all_processed_docs, f, indent=2)
+        
+        logger.info(f"Saved {len(all_processed_docs)} processed documents to {docs_output_path}")
+        logger.info(f"Total processing time: {self.stats['processing_time']['total']:.2f}s")
+        
+        # Run ISNE training if specified
+        if run_isne_training and all_processed_docs:
+            logger.info("Running ISNE training on processed documents...")
+            # Train the model (implementation depends on your ISNE orchestrator)
+            try:
+                from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
+                
+                # Create output directory for the model
+                model_dir = Path("./models/isne")
+                model_dir.mkdir(exist_ok=True, parents=True)
+                model_path = model_dir / "isne_model_latest.pt"
+                
+                # Run training
+                trainer = ISNETrainingOrchestrator()
+                trainer.train(
+                    documents=all_processed_docs,
+                    output_model_path=str(model_path),
+                    epochs=10,  # Reduced for testing
+                    learning_rate=0.001,
+                    batch_size=16
+                )
+                
+                logger.info(f"ISNE training completed. Model saved to {model_path}")
+            except Exception as e:
+                logger.error(f"Error during ISNE training: {str(e)}", exc_info=True)
+        
+        return self.stats
+    
+    def run_ingestion(self, model_path: str, output_dir: Optional[str] = None):
+        """Run the ISNE ingestion pipeline with validation and alerts.
+        
+        Args:
+            model_path: Path to the trained ISNE model
+            output_dir: Optional output directory for enhanced documents
+        """
+        start_time = time.time()
+        logger.info(f"Starting ISNE ingestion pipeline with alert system")
+        
+        # Find all supported files in the test directory
+        supported_files = self.find_supported_files()
+        
+        # Limit the number of files if specified
+        if self.num_files > 0 and len(supported_files) > self.num_files:
+            logger.info(f"Limiting processing to {self.num_files} files (out of {len(supported_files)})")
+            supported_files = supported_files[:self.num_files]
+        
+        # Create output directories
+        validation_dir = self.output_dir / "validation"
+        validation_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Start the worker pool and process documents
+        with Pool(processes=self.max_workers) as pool:
+            # Create batches for processing
+            logger.info("Creating document processing batches...")
+            batches = []
+            for i in range(0, len(supported_files), self.batch_size):
+                batch = supported_files[i:i+self.batch_size]
+                batches.append(batch)
+            
+            logger.info(f"Created {len(batches)} batches of size {self.batch_size}")
+            
+            # Process each batch
+            all_processed_docs = []
+            batch_count = 0
+            
+            for batch in batches:
+                batch_count += 1
+                logger.info(f"Processing batch {batch_count}/{len(batches)} ({len(batch)} files)")
+                
+                # Create arguments for each file in the batch
+                process_args = []
+                for file_idx, file_path in enumerate(batch):
+                    # Assign a unique worker ID based on the batch and file index
+                    worker_id = ((batch_count - 1) % self.max_workers) * self.batch_size + file_idx % self.batch_size
+                    process_args.append((file_path, self.config, worker_id))
+                
+                # Process the batch in parallel
+                try:
+                    batch_results = pool.map(process_document, process_args)
+                    all_processed_docs.extend([r for r in batch_results if r is not None])
+                except Exception as e:
+                    logger.error(f"Error processing batch {batch_count}: {str(e)}", exc_info=True)
+        
+        # Save processed documents to JSON file
+        docs_output_path = self.output_dir / "processed_documents.json"
+        with open(docs_output_path, "w") as f:
+            json.dump(all_processed_docs, f, indent=2)
+        
+        logger.info(f"Saved {len(all_processed_docs)} processed documents to {docs_output_path}")
+        
+        # Calculate processing time
+        processing_time = time.time() - start_time
+        logger.info(f"Document processing completed in {processing_time:.2f}s")
+        
+        # Apply ISNE model to enhance embeddings
+        logger.info("Applying ISNE model to enhance document embeddings...")
+        isne_start_time = time.time()
+        
+        try:
+            from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
+            
+            # Validate documents before ISNE application
+            pre_validation = validate_embeddings_before_isne(all_processed_docs)
+            
+            # Log validation results
+            logger.info(f"Pre-ISNE Validation: {len(all_processed_docs)} documents, {sum(1 for doc in all_processed_docs if 'chunks' in doc and doc['chunks'])} with chunks")
+            
+            # Check for validation issues and create alerts if needed
+            if pre_validation.get("missing_base_embeddings", 0) > 0:
+                self.alert_manager.alert(
+                    message=f"Missing base embeddings detected in {pre_validation['missing_base_embeddings']} chunks",
+                    level=AlertLevel.MEDIUM,
+                    source="isne_pipeline",
+                    context={
+                        "missing_count": pre_validation['missing_base_embeddings'],
+                        "affected_chunks": pre_validation.get('missing_base_embedding_ids', [])
+                    }
+                )
+            
+            # Apply ISNE model if exists and is valid
+            if not Path(model_path).exists():
+                error_msg = f"ISNE model not found at {model_path}"
+                logger.error(error_msg)
+                self.alert_manager.alert(
+                    message=error_msg,
+                    level=AlertLevel.HIGH,
+                    source="isne_pipeline",
+                    context={"model_path": model_path}
+                )
+                return
+            
+            # Load model and apply to documents
+            model = ISNETrainingOrchestrator.load_model(model_path)
+            
+            # Build graph from documents
+            data = self.build_graph_from_documents(all_processed_docs)
+            
+            # Apply ISNE model to get enhanced embeddings
+            enhanced_embeddings = model(data.x, data.edge_index, data.edge_attr)
+            
+            # Add enhanced embeddings back to documents
+            node_idx_map = {}
+            current_idx = 0
+            
+            # First pass to build node index mapping
+            for doc in all_processed_docs:
+                if "chunks" not in doc or not doc["chunks"]:
+                    continue
+                
+                for chunk_idx, chunk in enumerate(doc["chunks"]):
+                    if "embedding" not in chunk or not chunk["embedding"]:
+                        continue
+                    
+                    chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                    node_idx_map[chunk_id] = current_idx
+                    current_idx += 1
+            
+            # Second pass to add ISNE embeddings to chunks
+            for doc in all_processed_docs:
+                if "chunks" not in doc or not doc["chunks"]:
+                    continue
+                
+                for chunk_idx, chunk in enumerate(doc["chunks"]):
+                    if "embedding" not in chunk or not chunk["embedding"]:
+                        continue
+                    
+                    chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                    if chunk_id in node_idx_map:
+                        node_idx = node_idx_map[chunk_id]
+                        # Add the enhanced embedding to the chunk
+                        chunk["isne_embedding"] = enhanced_embeddings[node_idx].tolist()
+            
+            # Validate documents after ISNE application
+            post_validation = validate_embeddings_after_isne(all_processed_docs, pre_validation)
+            
+            # Check for validation issues after ISNE application
+            discrepancies = post_validation.get("discrepancies", {})
+            total_discrepancies = post_validation.get("total_discrepancies", 0)
+            
+            if total_discrepancies > 0:
+                alert_level = AlertLevel.HIGH if total_discrepancies > 5 else AlertLevel.MEDIUM
+                self.alert_manager.alert(
+                    message=f"Found {total_discrepancies} total embedding discrepancies - isne_vs_chunks: {discrepancies.get('isne_vs_chunks', 0)}, missing_isne: {discrepancies.get('missing_isne', 0)}",
+                    level=alert_level,
+                    source="isne_pipeline",
+                    context={
+                        "discrepancies": discrepancies,
+                        "total_discrepancies": total_discrepancies,
+                        "expected_counts": post_validation.get("expected_counts", {}),
+                        "actual_counts": post_validation.get("actual_counts", {})
+                    }
+                )
+            
+            # Store validation results for reporting
+            self.stats["validation"] = {
+                "pre_validation": pre_validation,
+                "post_validation": post_validation,
+                "alerts": self.alert_manager.get_alerts()
+            }
+            
+            # Attach validation summary to each document
+            for doc in all_processed_docs:
+                attach_validation_summary(doc, pre_validation, post_validation)
+            
+            logger.info("Document enhancement with ISNE embeddings completed")
+            
+        except Exception as e:
+            error_msg = f"Error during ISNE application: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            self.alert_manager.alert(
+                message=error_msg,
+                level=AlertLevel.CRITICAL,
+                source="isne_pipeline",
+                context={"exception": str(e)}
+            )
+            # Continue execution to save partial results
+        
+        # Calculate ISNE enhancement time
+        isne_enhancement_time = time.time() - isne_start_time
+        logger.info(f"ISNE enhancement completed in {isne_enhancement_time:.2f}s")
+        
+        # Save enhanced documents to JSON file
+        json_start_time = time.time()
+        isne_output_path = self.output_dir / "isne_enhanced_documents.json"
+        with open(isne_output_path, "w") as f:
+            json.dump(all_processed_docs, f, indent=2)
+        
+        # Save a sample of documents for inspection
+        sample_docs = all_processed_docs[:min(5, len(all_processed_docs))]
+        sample_path = self.output_dir / "isne_sample_documents.json"
+        with open(sample_path, "w") as f:
+            json.dump(sample_docs, f, indent=2)
+        
+        json_save_time = time.time() - json_start_time
+        logger.info(f"Saved {len(all_processed_docs)} enhanced documents to {isne_output_path}")
+        logger.info(f"Saved {len(sample_docs)} sample documents to {sample_path}")
+        
+        # Calculate total ingestion time
+        total_ingestion_time = time.time() - start_time
+        
+        # Prepare stats for reporting
+        ingestion_stats = {
+            "total_documents": len(all_processed_docs),
+            "total_chunks": self.stats["total_chunks"],
+            "processing_time": processing_time,
+            "isne_enhancement_time": isne_enhancement_time,
+            "json_save_time": json_save_time,
+            "total_ingestion_time": total_ingestion_time,
+            "output_path": str(isne_output_path),
+            "sample_path": str(sample_path),
+            "alerts": self.alert_manager.get_alerts()
+        }
+        
+        # Generate ingestion report
+        self._generate_ingestion_report(ingestion_stats)
+        
+        return ingestion_stats
+    
+    def build_graph_from_documents(self, docs):
+        """Build a graph from document chunks for ISNE processing.
+        
+        Args:
+            docs: List of documents with chunks and embeddings
+            
+        Returns:
+            PyTorch Geometric Data object representing the graph
+        """
+        import torch
+        from torch_geometric.data import Data
+        
+        # Extract embeddings and metadata
+        node_embeddings = []
+        node_metadata = []
+        node_model_types = []  # Track embedding model types
+        edge_index_src = []
+        edge_index_dst = []
+        edge_attr = []
+        
+        # Node index mapping
+        node_idx_map = {}
+        current_idx = 0
+        
+        # First pass: collect all nodes
+        for doc in docs:
+            if "chunks" not in doc or not doc["chunks"]:
+                continue
+            
+            for chunk_idx, chunk in enumerate(doc["chunks"]):
+                if "embedding" not in chunk or not chunk["embedding"]:
+                    continue
+                
+                chunk_id = f"{doc['file_id']}_{chunk_idx}"
+                node_idx_map[chunk_id] = current_idx
+                
+                # Add the base embedding
+                node_embeddings.append(chunk["embedding"])
+                
+                # Add metadata
+                metadata = {
+                    "doc_id": doc["file_id"],
+                    "chunk_id": chunk_idx,
+                    "text": chunk.get("text", "")[:100]  # Truncate for metadata
+                }
+                node_metadata.append(metadata)
+                
+                # Track embedding model type
+                model_type = chunk.get("metadata", {}).get("embedding_model", "default")
+                node_model_types.append(model_type)
+                
+                current_idx += 1
+        
+        # Second pass: build edges
+        for doc in docs:
+            if "chunks" not in doc or not doc["chunks"]:
+                continue
+            
+            # Create sequential edges between chunks in the same document
+            for i in range(len(doc["chunks"]) - 1):
+                source_id = f"{doc['file_id']}_{i}"
+                target_id = f"{doc['file_id']}_{i+1}"
+                
+                if source_id in node_idx_map and target_id in node_idx_map:
+                    edge_index_src.append(node_idx_map[source_id])
+                    edge_index_dst.append(node_idx_map[target_id])
+                    edge_attr.append([1.0])  # Sequential relationship weight
+            
+            # Add code-specific relationships from chunk metadata
+            for chunk_idx, chunk in enumerate(doc["chunks"]):
+                if "metadata" not in chunk or "references" not in chunk["metadata"]:
+                    continue
+                
+                source_id = f"{doc['file_id']}_{chunk_idx}"
+                if source_id not in node_idx_map:
+                    continue
+                
+                # Process each reference (relationship)
+                for reference in chunk["metadata"]["references"]:
+                    target_id = reference.get("target")
+                    if not target_id or target_id not in node_idx_map:
+                        continue
+                    
+                    relation_type = reference.get("type", "REFERENCES")
+                    weight = reference.get("weight", 0.8)
+                    
+                    # Add edge to the graph
+                    edge_index_src.append(node_idx_map[source_id])
+                    edge_index_dst.append(node_idx_map[target_id])
+                    edge_attr.append([weight])  # Use the relationship weight
+        
+        # Convert lists to tensors
+        x = torch.tensor(node_embeddings, dtype=torch.float)
+        edge_index = torch.tensor([edge_index_src, edge_index_dst], dtype=torch.long)
+        edge_attr = torch.tensor(edge_attr, dtype=torch.float)
+        
+        # Create PyTorch Geometric Data object
+        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        
+        logger.info(f"Built graph with {x.shape[0]} nodes and {edge_index.shape[1]} edges")
+        return data
+    
     def _generate_ingestion_report(self, stats: Dict[str, Any]):
         """Generate a comprehensive report for the ingestion process."""
         logger.info("\n=== Ingestion Pipeline Report ===")
@@ -1732,9 +1591,34 @@ class PipelineMultiprocessTester:
         logger.info(f"  JSON Saving:           {stats['json_save_time']:.2f}s")
         logger.info(f"  Total Ingestion Time:  {stats['total_ingestion_time']:.2f}s")
         
+        # Add validation and alert information to report
+        if "alerts" in stats and stats["alerts"]:
+            alert_counts = {
+                "LOW": 0,
+                "MEDIUM": 0,
+                "HIGH": 0,
+                "CRITICAL": 0
+            }
+            
+            for alert in stats["alerts"]:
+                if alert["level"] in alert_counts:
+                    alert_counts[alert["level"]] += 1
+            
+            logger.info("\nAlert Summary:")
+            logger.info(f"  LOW:      {alert_counts['LOW']}")
+            logger.info(f"  MEDIUM:   {alert_counts['MEDIUM']}")
+            logger.info(f"  HIGH:     {alert_counts['HIGH']}")
+            logger.info(f"  CRITICAL: {alert_counts['CRITICAL']}")
+            
+            # Check if there are critical or high alerts
+            if alert_counts["CRITICAL"] > 0 or alert_counts["HIGH"] > 0:
+                logger.warning(f"⚠️ WARNING: {alert_counts['CRITICAL'] + alert_counts['HIGH']} critical/high alerts were generated.")
+                logger.warning(f"Review alerts in {self.alert_dir}")
+        
         logger.info("\nOutput Files:")
         logger.info(f"  All Documents:         {stats['output_path']}")
         logger.info(f"  Sample Documents:      {stats['sample_path']}")
+        logger.info(f"  Alert Logs:            {self.alert_dir}")
         
         logger.info("\nIngestion Pipeline Completed Successfully!")
         
@@ -1799,7 +1683,8 @@ def main():
         output_dir=args.output_dir,
         num_files=args.files,
         max_workers=args.workers,
-        batch_size=8  # Default batch size
+        batch_size=8,  # Default batch size
+        alert_threshold="MEDIUM"  # Default alert threshold
     )
     
     # Determine which mode to run
