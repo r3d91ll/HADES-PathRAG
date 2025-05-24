@@ -203,6 +203,156 @@ def sample_neighbors(
         return neighbors[perm[:num_samples]]
 
 
+def create_graph_from_documents(docs: List[Dict[str, Any]]) -> Tuple[Optional[GraphData], List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Create a graph from documents for ISNE processing.
+    
+    This function creates a graph representation from a collection of documents,
+    extracting embeddings and building edges based on document relationships.
+    
+    Args:
+        docs: List of processed documents with embeddings
+        
+    Returns:
+        Tuple containing:
+            - PyTorch Geometric graph data object (or None if creation fails)
+            - List of node metadata dictionaries
+            - Mapping from chunk IDs to node indices
+    """
+    check_torch_geometric()
+    
+    # Extract embeddings and metadata
+    node_embeddings = []
+    node_metadata = []
+    node_model_types = []  # Track embedding model types
+    edge_index_src = []
+    edge_index_dst = []
+    edge_attr = []
+    
+    # Node index mapping
+    node_idx_map = {}
+    current_idx = 0
+    
+    # First pass: collect all nodes
+    for doc in docs:
+        if "chunks" not in doc or not doc["chunks"]:
+            continue
+            
+        for chunk_idx, chunk in enumerate(doc["chunks"]):
+            # Skip chunks without embeddings
+            if "embedding" not in chunk or chunk["embedding"] is None:
+                continue
+                
+            # Create a unique ID for this chunk
+            chunk_id = f"{doc.get('file_id', f'doc_{id(doc)}')}_{ chunk_idx}"
+            
+            # Store the node index mapping
+            node_idx_map[chunk_id] = current_idx
+            current_idx += 1
+            
+            # Add the embedding and metadata
+            node_embeddings.append(chunk["embedding"])
+            
+            # Store embedding model information for ISNE awareness
+            embedding_model = chunk.get("embedding_model", "unknown")
+            embedding_type = chunk.get("embedding_type", "unknown")
+            
+            node_model_types.append(embedding_type)
+            
+            node_metadata.append({
+                "file_id": doc.get("file_id", f"doc_{id(doc)}"),
+                "chunk_id": chunk_id,
+                "text": chunk.get("text", ""),
+                "embedding_model": embedding_model,
+                "embedding_type": embedding_type,
+                "metadata": chunk.get("metadata", {})
+            })
+    
+    # Second pass: create edges
+    for doc in docs:
+        if "chunks" not in doc or len(doc["chunks"]) < 2:
+            continue
+            
+        # Create sequential edges between chunks in the same document
+        for i in range(len(doc["chunks"]) - 1):
+            src_id = f"{doc.get('file_id', f'doc_{id(doc)}')}_{ i}"
+            dst_id = f"{doc.get('file_id', f'doc_{id(doc)}')}_{ i+1}"
+            
+            if src_id in node_idx_map and dst_id in node_idx_map:
+                src_idx = node_idx_map[src_id]
+                dst_idx = node_idx_map[dst_id]
+                
+                # Check if embeddings are from the same model type
+                src_type = node_model_types[src_idx] if src_idx < len(node_model_types) else "unknown"
+                dst_type = node_model_types[dst_idx] if dst_idx < len(node_model_types) else "unknown"
+                
+                # Adjust edge weight based on embedding model compatibility
+                # Same model type gets full weight, different types get reduced weight
+                edge_weight = 1.0 if src_type == dst_type else 0.7
+                
+                # Add sequential edge
+                edge_index_src.append(src_idx)
+                edge_index_dst.append(dst_idx)
+                edge_attr.append([edge_weight])  # Sequential relationship with model-aware weight
+                
+                # Add reverse edge for undirected graph
+                edge_index_src.append(dst_idx)
+                edge_index_dst.append(src_idx)
+                edge_attr.append([edge_weight])
+        
+        # Process code-specific relationships if this is a Python file
+        # These relationships come from metadata produced by code chunkers
+        if doc.get("file_name", "").endswith(".py"):
+            for chunk_idx, chunk in enumerate(doc["chunks"]):
+                # Skip chunks without metadata or references
+                if "metadata" not in chunk or "references" not in chunk["metadata"]:
+                    continue
+                
+                # Get source ID
+                src_id = f"{doc.get('file_id', f'doc_{id(doc)}')}_{ chunk_idx}"
+                if src_id not in node_idx_map:
+                    continue
+                
+                src_idx = node_idx_map[src_id]
+                
+                # Process each reference (relationship) in the chunk metadata
+                for reference in chunk["metadata"]["references"]:
+                    target_chunk_id = reference.get("target")
+                    if not target_chunk_id or target_chunk_id not in node_idx_map:
+                        continue
+                    
+                    dst_idx = node_idx_map[target_chunk_id]
+                    weight = reference.get("weight", 0.9)  # Code relationships get high weight
+                    
+                    # Add directed edge for code relationship
+                    edge_index_src.append(src_idx)
+                    edge_index_dst.append(dst_idx)
+                    edge_attr.append([weight])
+    
+    # Create the PyTorch Geometric data object
+    if not node_embeddings:
+        logger.warning("No valid embeddings found in documents")
+        return None, [], {}
+        
+    try:
+        node_embeddings_tensor = torch.tensor(node_embeddings, dtype=torch.float)
+        edge_index = torch.tensor([edge_index_src, edge_index_dst], dtype=torch.long)
+        edge_attr_tensor = torch.tensor(edge_attr, dtype=torch.float) if edge_attr else None
+        
+        graph = GraphData(
+            x=node_embeddings_tensor,
+            edge_index=edge_index,
+            edge_attr=edge_attr_tensor
+        )
+        
+        logger.info(f"Created graph with {graph.num_nodes} nodes and {graph.num_edges} edges")
+        
+        return graph, node_metadata, node_idx_map
+    except Exception as e:
+        logger.error(f"Error creating graph: {e}")
+        return None, [], {}
+
+
 def compute_similarity_matrix(embeddings: Tensor, threshold: Optional[float] = None) -> Tensor:
     """
     Compute cosine similarity matrix between embeddings.

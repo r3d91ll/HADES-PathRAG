@@ -85,16 +85,44 @@ def validate_embeddings_after_isne(documents: List[Dict[str, Any]],
                         for chunk in doc.get("chunks", []) 
                         if "isne_embedding" in chunk)
     
+    # Count chunks with relationship data
+    chunks_with_relationships = sum(1 for doc in documents 
+                                 for chunk in doc.get("chunks", []) 
+                                 if "relationships" in chunk and chunk["relationships"])
+    
+    # Count total relationships
+    total_relationships = sum(len(chunk.get("relationships", [])) 
+                           for doc in documents 
+                           for chunk in doc.get("chunks", []))
+    
     # Check for chunks without ISNE embeddings
     chunks_missing_isne: List[str] = []
+    # Check for chunks without relationships
+    chunks_missing_relationships: List[str] = []
+    # Check for invalid relationship structures
+    chunks_with_invalid_relationships: List[str] = []
+    
     for doc_idx, doc in enumerate(documents):
         if "chunks" not in doc:
             continue
             
         for chunk_idx, chunk in enumerate(doc.get("chunks", [])):
+            chunk_id = f"{doc.get('file_id', f'doc_{doc_idx}')}_{chunk_idx}"
+            
+            # Check for missing ISNE embeddings
             if "isne_embedding" not in chunk:
-                chunk_id = f"{doc.get('file_id', f'doc_{doc_idx}')}_{chunk_idx}"
                 chunks_missing_isne.append(chunk_id)
+            
+            # Check for missing relationships
+            if "isne_embedding" in chunk and ("relationships" not in chunk or not chunk["relationships"]):
+                chunks_missing_relationships.append(chunk_id)
+            
+            # Validate relationship structure
+            if "relationships" in chunk and chunk["relationships"]:
+                for rel_idx, rel in enumerate(chunk["relationships"]):
+                    if not all(key in rel for key in ["source", "target", "type", "weight"]):
+                        if chunk_id not in chunks_with_invalid_relationships:
+                            chunks_with_invalid_relationships.append(chunk_id)
     
     # Look for any non-chunk ISNE embeddings that might be in document metadata
     doc_level_isne = sum(1 for doc in documents if "isne_embedding" in doc)
@@ -119,6 +147,7 @@ def validate_embeddings_after_isne(documents: List[Dict[str, Any]],
     
     # Log validation results
     logger.info(f"Post-ISNE Validation: {chunks_with_isne}/{pre_validation['total_chunks']} chunks have ISNE embeddings")
+    logger.info(f"Relationship Data: {chunks_with_relationships} chunks have relationships, {total_relationships} total relationships")
     
     # Check for discrepancies
     if chunks_with_isne != pre_validation['total_chunks']:
@@ -126,6 +155,16 @@ def validate_embeddings_after_isne(documents: List[Dict[str, Any]],
         if len(chunks_missing_isne) > 0:
             logger.warning(f"⚠️ Found {len(chunks_missing_isne)} chunks without ISNE embeddings")
             logger.warning(f"  First 5 chunks missing ISNE: {chunks_missing_isne[:5]}")
+    
+    if chunks_with_relationships < chunks_with_isne:
+        logger.warning(f"⚠️ Discrepancy detected: {chunks_with_relationships} chunks with relationships vs {chunks_with_isne} with ISNE embeddings")
+        if len(chunks_missing_relationships) > 0:
+            logger.warning(f"⚠️ Found {len(chunks_missing_relationships)} chunks with ISNE but no relationships")
+            logger.warning(f"  First 5 chunks missing relationships: {chunks_missing_relationships[:5]}")
+    
+    if chunks_with_invalid_relationships:
+        logger.warning(f"⚠️ Found {len(chunks_with_invalid_relationships)} chunks with invalid relationship structures")
+        logger.warning(f"  First 5 chunks with invalid relationships: {chunks_with_invalid_relationships[:5]}")
     
     if total_isne_count > chunks_with_isne:
         logger.warning(f"⚠️ Found {total_isne_count - chunks_with_isne} duplicate ISNE embeddings")
@@ -143,6 +182,12 @@ def validate_embeddings_after_isne(documents: List[Dict[str, Any]],
         "chunks_with_isne": chunks_with_isne,
         "chunks_missing_isne": len(chunks_missing_isne),
         "chunks_missing_isne_ids": chunks_missing_isne[:10],  # Store first 10 for reference
+        "chunks_with_relationships": chunks_with_relationships,
+        "chunks_missing_relationships": len(chunks_missing_relationships),
+        "chunks_missing_relationship_ids": chunks_missing_relationships[:10],
+        "chunks_with_invalid_relationships": len(chunks_with_invalid_relationships),
+        "chunks_with_invalid_relationship_ids": chunks_with_invalid_relationships[:10],
+        "total_relationships": total_relationships,
         "doc_level_isne": doc_level_isne,
         "total_isne_count": total_isne_count,
         "duplicate_isne": total_isne_count - chunks_with_isne if total_isne_count > chunks_with_isne else 0,

@@ -3,7 +3,9 @@
 Multiprocessing implementation of the document processing pipeline test.
 
 This test demonstrates true parallel processing of documents using Python's multiprocessing
-module, with configurable GPU/CPU resource allocation based on the training_pipeline_config.yaml.
+library. It includes a complete pipeline with document processing, chunking, embedding,
+ISNE application, and alert system integration for validation. The pipeline uses configurable 
+GPU/CPU resource allocation based on the training_pipeline_config.yaml.
 """
 
 import os
@@ -11,9 +13,11 @@ import sys
 import time
 import yaml
 import json
+import copy
 import asyncio
 import logging
 import argparse
+import traceback
 import numpy as np
 from datetime import datetime
 from pathlib import Path
@@ -715,6 +719,9 @@ class PipelineMultiprocessTester:
         supported_files = sorted(supported_files, key=lambda x: str(x))
         logger.info(f"Found {len(supported_files)} supported files in {self.test_data_dir}")
         
+        return supported_files
+        
+    def enhance_with_isne(self, docs, model_path):
         """
         Apply trained ISNE model to enhance document embeddings.
         
@@ -1322,7 +1329,29 @@ class PipelineMultiprocessTester:
             from src.isne.trainer.training_orchestrator import ISNETrainingOrchestrator
             
             # Validate documents before ISNE application
+            logger.info("Validating documents before ISNE application")
             pre_validation = validate_embeddings_before_isne(all_processed_docs)
+            
+            # Log validation results
+            total_chunks = sum(len(doc.get("chunks", [])) for doc in all_processed_docs)
+            chunks_with_base = pre_validation.get("chunks_with_base_embeddings", 0)
+            logger.info(f"Pre-ISNE Validation: {len(all_processed_docs)} documents, {total_chunks} total chunks")
+            logger.info(f"Found {chunks_with_base}/{total_chunks} chunks with base embeddings")
+            
+            # Generate alerts for validation issues
+            missing_base = pre_validation.get("missing_base_embeddings", 0)
+            if missing_base > 0:
+                alert_level = AlertLevel.HIGH if missing_base > total_chunks * 0.2 else AlertLevel.MEDIUM
+                self.alert_manager.alert(
+                    message=f"Missing base embeddings detected in {missing_base} chunks",
+                    level=alert_level,
+                    source="isne_pipeline",
+                    context={
+                        "missing_count": missing_base,
+                        "total_chunks": total_chunks,
+                        "affected_chunks": pre_validation.get('missing_base_embedding_ids', [])
+                    }
+                )
             
             # Log validation results
             logger.info(f"Pre-ISNE Validation: {len(all_processed_docs)} documents, {sum(1 for doc in all_processed_docs if 'chunks' in doc and doc['chunks'])} with chunks")
@@ -1354,8 +1383,8 @@ class PipelineMultiprocessTester:
             # Load model and apply to documents
             model = ISNETrainingOrchestrator.load_model(model_path)
             
-            # Build graph from documents
-            data = self.build_graph_from_documents(all_processed_docs)
+            # Build graph from documents and get relationship data
+            data, chunk_relationships = self.build_graph_from_documents(all_processed_docs)
             
             # Apply ISNE model to get enhanced embeddings
             enhanced_embeddings = model(data.x, data.edge_index, data.edge_attr)
@@ -1377,7 +1406,7 @@ class PipelineMultiprocessTester:
                     node_idx_map[chunk_id] = current_idx
                     current_idx += 1
             
-            # Second pass to add ISNE embeddings to chunks
+            # Second pass to add ISNE embeddings and relationships to chunks
             for doc in all_processed_docs:
                 if "chunks" not in doc or not doc["chunks"]:
                     continue
@@ -1391,18 +1420,23 @@ class PipelineMultiprocessTester:
                         node_idx = node_idx_map[chunk_id]
                         # Add the enhanced embedding to the chunk
                         chunk["isne_embedding"] = enhanced_embeddings[node_idx].tolist()
+                        
+                        # Add relationship data if available for this chunk
+                        if chunk_id in chunk_relationships:
+                            chunk["relationships"] = chunk_relationships[chunk_id]
             
             # Validate documents after ISNE application
+            logger.info("Validating documents after ISNE application")
             post_validation = validate_embeddings_after_isne(all_processed_docs, pre_validation)
             
-            # Check for validation issues after ISNE application
+            # Check for validation issues and generate alerts
             discrepancies = post_validation.get("discrepancies", {})
             total_discrepancies = post_validation.get("total_discrepancies", 0)
             
             if total_discrepancies > 0:
-                alert_level = AlertLevel.HIGH if total_discrepancies > 5 else AlertLevel.MEDIUM
+                alert_level = AlertLevel.HIGH if total_discrepancies > total_chunks * 0.1 else AlertLevel.MEDIUM
                 self.alert_manager.alert(
-                    message=f"Found {total_discrepancies} total embedding discrepancies - isne_vs_chunks: {discrepancies.get('isne_vs_chunks', 0)}, missing_isne: {discrepancies.get('missing_isne', 0)}",
+                    message=f"Found {total_discrepancies} embedding discrepancies after ISNE application",
                     level=alert_level,
                     source="isne_pipeline",
                     context={
@@ -1412,6 +1446,14 @@ class PipelineMultiprocessTester:
                         "actual_counts": post_validation.get("actual_counts", {})
                     }
                 )
+                
+            # Log validation summary
+            isne_count = post_validation.get("actual_counts", {}).get("isne_embeddings", 0)
+            logger.info(f"Post-ISNE Validation: {isne_count}/{total_chunks} chunks have ISNE embeddings")
+            
+            # Check for validation issues after ISNE application
+            discrepancies = post_validation.get("discrepancies", {})
+            total_discrepancies = post_validation.get("total_discrepancies", 0)
             
             # Store validation results for reporting
             self.stats["validation"] = {
@@ -1420,9 +1462,30 @@ class PipelineMultiprocessTester:
                 "alerts": self.alert_manager.get_alerts()
             }
             
+            # Define helper function to attach validation summaries to documents
+            def attach_validation_summary(doc, validation_results):
+                """Attach validation summary to a document.
+                
+                Args:
+                    doc: Document to attach validation summary to
+                    validation_results: Dictionary containing validation results
+                """
+                if "validation" not in doc:
+                    doc["validation"] = {}
+                
+                # Combine pre and post validation results
+                doc["validation"] = {
+                    "pre_validation": pre_validation.get("summary", {}),
+                    "post_validation": post_validation.get("summary", {}),
+                    "has_discrepancies": post_validation.get("total_discrepancies", 0) > 0
+                }
+                
+                # Add validation timestamp
+                doc["validation"]["timestamp"] = datetime.now().isoformat()
+            
             # Attach validation summary to each document
             for doc in all_processed_docs:
-                attach_validation_summary(doc, pre_validation, post_validation)
+                attach_validation_summary(doc, {"pre": pre_validation, "post": post_validation})
             
             logger.info("Document enhancement with ISNE embeddings completed")
             
@@ -1433,7 +1496,10 @@ class PipelineMultiprocessTester:
                 message=error_msg,
                 level=AlertLevel.CRITICAL,
                 source="isne_pipeline",
-                context={"exception": str(e)}
+                context={
+                    "exception": str(e),
+                    "stack_trace": traceback.format_exc()
+                }
             )
             # Continue execution to save partial results
         
@@ -1485,7 +1551,7 @@ class PipelineMultiprocessTester:
             docs: List of documents with chunks and embeddings
             
         Returns:
-            PyTorch Geometric Data object representing the graph
+            Tuple of (PyTorch Geometric Data object, edge information dict)
         """
         import torch
         from torch_geometric.data import Data
@@ -1502,6 +1568,12 @@ class PipelineMultiprocessTester:
         node_idx_map = {}
         current_idx = 0
         
+        # Reverse mapping from node index to chunk ID for edge reconstruction
+        idx_to_chunk_id = {}
+        
+        # Store edge information for saving back to documents
+        edge_info = []
+        
         # First pass: collect all nodes
         for doc in docs:
             if "chunks" not in doc or not doc["chunks"]:
@@ -1513,6 +1585,7 @@ class PipelineMultiprocessTester:
                 
                 chunk_id = f"{doc['file_id']}_{chunk_idx}"
                 node_idx_map[chunk_id] = current_idx
+                idx_to_chunk_id[current_idx] = chunk_id
                 
                 # Add the base embedding
                 node_embeddings.append(chunk["embedding"])
@@ -1520,7 +1593,7 @@ class PipelineMultiprocessTester:
                 # Add metadata
                 metadata = {
                     "doc_id": doc["file_id"],
-                    "chunk_id": chunk_idx,
+                    "chunk_idx": chunk_idx,
                     "text": chunk.get("text", "")[:100]  # Truncate for metadata
                 }
                 node_metadata.append(metadata)
@@ -1542,9 +1615,20 @@ class PipelineMultiprocessTester:
                 target_id = f"{doc['file_id']}_{i+1}"
                 
                 if source_id in node_idx_map and target_id in node_idx_map:
-                    edge_index_src.append(node_idx_map[source_id])
-                    edge_index_dst.append(node_idx_map[target_id])
+                    src_idx = node_idx_map[source_id]
+                    tgt_idx = node_idx_map[target_id]
+                    
+                    edge_index_src.append(src_idx)
+                    edge_index_dst.append(tgt_idx)
                     edge_attr.append([1.0])  # Sequential relationship weight
+                    
+                    # Store the edge information for later use
+                    edge_info.append({
+                        "source": source_id,
+                        "target": target_id,
+                        "type": "SEQUENTIAL",
+                        "weight": 1.0
+                    })
             
             # Add code-specific relationships from chunk metadata
             for chunk_idx, chunk in enumerate(doc["chunks"]):
@@ -1565,9 +1649,20 @@ class PipelineMultiprocessTester:
                     weight = reference.get("weight", 0.8)
                     
                     # Add edge to the graph
-                    edge_index_src.append(node_idx_map[source_id])
-                    edge_index_dst.append(node_idx_map[target_id])
+                    src_idx = node_idx_map[source_id]
+                    tgt_idx = node_idx_map[target_id]
+                    
+                    edge_index_src.append(src_idx)
+                    edge_index_dst.append(tgt_idx)
                     edge_attr.append([weight])  # Use the relationship weight
+                    
+                    # Store the edge information for later use
+                    edge_info.append({
+                        "source": source_id,
+                        "target": target_id,
+                        "type": relation_type,
+                        "weight": weight
+                    })
         
         # Convert lists to tensors
         x = torch.tensor(node_embeddings, dtype=torch.float)
@@ -1577,8 +1672,16 @@ class PipelineMultiprocessTester:
         # Create PyTorch Geometric Data object
         data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
         
+        # Create mapping from chunk IDs to their relationships
+        chunk_relationships = {}
+        for edge in edge_info:
+            source_id = edge["source"]
+            if source_id not in chunk_relationships:
+                chunk_relationships[source_id] = []
+            chunk_relationships[source_id].append(edge)
+        
         logger.info(f"Built graph with {x.shape[0]} nodes and {edge_index.shape[1]} edges")
-        return data
+        return data, chunk_relationships
     
     def _generate_ingestion_report(self, stats: Dict[str, Any]):
         """Generate a comprehensive report for the ingestion process."""
@@ -1601,8 +1704,19 @@ class PipelineMultiprocessTester:
             }
             
             for alert in stats["alerts"]:
-                if alert["level"] in alert_counts:
-                    alert_counts[alert["level"]] += 1
+                # Handle both dictionary alerts and Alert objects
+                if isinstance(alert, dict) and "level" in alert:
+                    level = alert["level"]
+                elif hasattr(alert, "level"):  # Alert object
+                    level = alert.level
+                elif hasattr(alert, "to_dict"):
+                    level = alert.to_dict().get("level")
+                else:
+                    logger.warning(f"Unknown alert format: {type(alert)}, skipping")
+                    continue
+                    
+                if level in alert_counts:
+                    alert_counts[level] += 1
             
             logger.info("\nAlert Summary:")
             logger.info(f"  LOW:      {alert_counts['LOW']}")
@@ -1622,11 +1736,27 @@ class PipelineMultiprocessTester:
         
         logger.info("\nIngestion Pipeline Completed Successfully!")
         
-        # Write report to file
-        report_file = self.output_dir / "ingestion_report.json"
-        with open(report_file, "w") as f:
-            json.dump(stats, f, indent=2)
-        logger.info(f"Detailed ingestion report saved to {report_file}")
+        # Convert to JSON serializable format
+        serializable_stats = copy.deepcopy(stats)
+        
+        # Convert Alert objects to dictionaries for JSON serialization
+        if "alerts" in serializable_stats:
+            alerts_json = []
+            for alert in serializable_stats["alerts"]:
+                if hasattr(alert, "to_dict"):
+                    alerts_json.append(alert.to_dict())
+                elif isinstance(alert, dict):
+                    alerts_json.append(alert)
+                else:
+                    # Skip non-serializable objects
+                    logger.warning(f"Skipping non-serializable alert: {type(alert)}")
+            serializable_stats["alerts"] = alerts_json
+        
+        # Save report as JSON
+        report_path = self.output_dir / "ingestion_report.json"
+        with open(report_path, "w") as f:
+            json.dump(serializable_stats, f, indent=2)
+        logger.info(f"Detailed ingestion report saved to {report_path}")
 
 # Initialize multiprocessing
 def init_mp():
@@ -1674,6 +1804,8 @@ def main():
                         help='Path to trained ISNE model (for ingestion mode)')
     ingest_group.add_argument('--output-file', type=str,
                         help='Custom output file path for enhanced documents (for ingestion mode)')
+    ingest_group.add_argument('--alert-threshold', type=str, choices=['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'],
+                        default='MEDIUM', help='Minimum alert level to log (LOW, MEDIUM, HIGH, CRITICAL)')
     
     args = parser.parse_args()
     
@@ -1684,7 +1816,7 @@ def main():
         num_files=args.files,
         max_workers=args.workers,
         batch_size=8,  # Default batch size
-        alert_threshold="MEDIUM"  # Default alert threshold
+        alert_threshold=args.alert_threshold
     )
     
     # Determine which mode to run
